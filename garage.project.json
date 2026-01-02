@@ -1,0 +1,37 @@
+{
+  "name": "Garage",
+  "tree": {
+    "$className": "DataModel",
+
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "GameScripts": {
+        "$path": "src/garage/ServerScripts"
+      }
+    },
+
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "Modules": {
+        "$path": "src/garage/ReplicatedModules"
+      }
+    },
+
+    "StarterGui": {
+      "$className": "StarterGui",
+      "GameScripts": {
+        "$path": "src/garage/GuiScripts"
+      }
+    },
+
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "GameScripts": {
+          "$path": "src/garage/PlayerScripts"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "Race",
+  "tree": {
+    "$className": "DataModel",
+
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "GameScripts": {
+        "$path": "src/race/ServerScripts"
+      }
+    },
+
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "Modules": {
+        "$path": "src/race/ReplicatedModules"
+      }
+    },
+
+    "StarterGui": {
+      "$className": "StarterGui",
+      "GameScripts": {
+        "$path": "src/race/GuiScripts"
+      }
+    },
+
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "GameScripts": {
+          "$path": "src/race/PlayerScripts"
+        }
+      }
+    }
+  }
+}
