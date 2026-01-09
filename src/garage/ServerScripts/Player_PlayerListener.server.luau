@@ -10,7 +10,7 @@ local getNotifications = ReplicatedStorage:WaitForChild("Player"):WaitForChild("
 local toRaces = ReplicatedStorage:WaitForChild("Player"):WaitForChild("ToRaces")
 local PlayerCache = require(game.ServerScriptService:WaitForChild("GameScripts"):WaitForChild("Player_PlayerCache"))
 local ServerData = require(game.ServerScriptService:WaitForChild("GameScripts"):WaitForChild("Data_DataCache"))
-
+local purchaseSkinWithCash = ReplicatedStorage:WaitForChild("Player"):WaitForChild("PurchaseSkinWithCash")
 -- Track player session times for play time tracking
 local playerJoinTimes = {}
 
@@ -69,6 +69,42 @@ ToggleMusic.OnServerInvoke = function(player)
 end
 
 
+-- Respond when client invokes PurchaseSkinWithCash
+purchaseSkinWithCash.OnServerInvoke = function(player, skinId)
+	if not player or not player.UserId then
+		warn("[PlayerListener] PurchaseSkinWithCash: missing player or UserId")
+		return {success = false, error = "Invalid player"}
+	end
+
+	if not skinId then
+		warn("[PlayerListener] PurchaseSkinWithCash: missing skinId")
+		return {success = false, error = "Missing skin ID"}
+	end
+
+	print("[PlayerListener] Purchasing skin with cash for player", player.Name, "- skin:", skinId)
+
+	-- Call backend API to purchase the skin
+	local result = ApiService.PurchaseSkinWithCash(player.UserId, skinId)
+
+	if result and result.success then
+		-- Update player's money attribute
+		local playerData = ApiService.GetPlayerData(player.UserId)
+		if playerData and playerData.money then
+			player:SetAttribute("Money", playerData.money)
+		end
+
+		-- Clear player cache to refresh skin list
+		PlayerCache.Clear(player.UserId)
+
+		print("[PlayerListener] Successfully purchased skin with cash")
+		return result
+	else
+		warn("[PlayerListener] Failed to purchase skin with cash:", result and result.error or "Unknown error")
+		return result or {success = false, error = "Purchase failed"}
+	end
+end
+
+
 -- Respond when client invokes BackToGarage
 toRaces.OnServerInvoke = function(player)
 	if not player then
@@ -77,7 +113,7 @@ toRaces.OnServerInvoke = function(player)
 	end
 
 	-- Placeholder for garage place ID - replace with actual garage place ID
-	local GARAGE_PLACE_ID = 78232942736747 -- TODO: Replace with actual garage place ID
+	local GARAGE_PLACE_ID = 135874663190662
 
 	print("[ClientFetch] Teleporting player", player.Name, "back to garage (Place ID:", GARAGE_PLACE_ID, ")")
 

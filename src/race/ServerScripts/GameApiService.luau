@@ -1,3 +1,4 @@
+--#RACE
 -- ApiService ModuleScript
 local HttpService = game:GetService("HttpService")
 local ApiService = {}
@@ -46,7 +47,6 @@ local function postRequest(endpoint, data)
 	end)
 
 	if success and response.Success then
-		print("[API] POST success:", endpoint)
 		return HttpService:JSONDecode(response.Body)
 	else
 		warn("[API] POST failed:", endpoint, response and response.StatusCode)
@@ -71,7 +71,6 @@ local function getRequest(endpoint)
 	end)
 
 	if success and response.Success then
-		print("[API] GET success:", endpoint)
 		return HttpService:JSONDecode(response.Body)
 	else
 		warn("[API] GET failed:", endpoint, response and response.StatusCode)
@@ -97,7 +96,6 @@ local function patchRequest(endpoint, data)
 	end)
 
 	if success and response.Success then
-		print("[API] PATCH success:", endpoint)
 		return HttpService:JSONDecode(response.Body)
 	else
 		warn("[API] PATCH failed:", endpoint, response and response.StatusCode, response and response.Body)
@@ -179,13 +177,30 @@ function ApiService.UpdatePlayerMusic(robloxUserId, musicEnabled)
 end
 
 
+function ApiService.PurchaseSkinWithCash(robloxUserId, skinId)
+	if not robloxUserId then
+		warn("[ApiService] PurchaseSkinWithCash: missing robloxUserId")
+		return nil
+	end
+	if not skinId then
+		warn("[ApiService] PurchaseSkinWithCash: missing skinId")
+		return nil
+	end
+	local payload = {
+		player_roblox_id = robloxUserId,
+		vehicle_skin_id = skinId
+	}
+	local url = "player-vehicle-skins/purchase-skin-with-cash/"
+	return postRequest(url, payload)
+end
+
+
 function ApiService.PatchVehicleSlotted(vehicleId, slottedValue, num)
 
 	local payload = {
 		slotted = slottedValue,
 		slotted_number = num
 	}
-	print(payload)
 	local url = "vehicles/" .. vehicleId .. "/"
 	return patchRequest(url, payload)
 end
@@ -196,7 +211,6 @@ function ApiService.PatchVehicleMoney(vehicleId, accumulatedMoney)
 	local payload = {
 		money_accumulated = math.floor(accumulatedMoney * 100 + 0.5) / 100
 	}
-	print(payload)
 	local url = "vehicles/" .. vehicleId .. "/"
 	return patchRequest(url, payload)
 end
@@ -231,7 +245,6 @@ function ApiService.ChooseFirstCar(player, carName)
 		name = carName,
 		roblox_id = player.UserId
 	}
-	print(payload)
 	return postRequest("choose-first-car/", payload)
 end
 
@@ -277,7 +290,6 @@ function ApiService.DeleteVehicle(vehicleId)
 
 	if success and response.Success then
 		if response.StatusCode == 200 then
-			print("[API] DELETE success:", vehicleId)
 			return HttpService:JSONDecode(response.Body)
 		elseif response.StatusCode == 404 then
 			warn("[API] Vehicle not found:", vehicleId)
@@ -416,6 +428,49 @@ function ApiService.JoinRace(raceId, vehicleId)
 	}
 
 	return postRequest("race/join/", payload)
+end
+
+-- ✅ Join Race by Track: join or create a race by track and level
+function ApiService.JoinRaceByTrack(vehicleId, track, level, serverId)
+	if not vehicleId or not track or not level or not serverId then
+		warn("[ApiService] JoinRaceByTrack: missing vehicleId, track, level, or serverId")
+		return nil
+	end
+
+	local payload = {
+		vehicle_id = tostring(vehicleId),
+		track = track,
+		level = level,
+		server_id = tostring(serverId)
+	}
+
+	return postRequest("race/join-by-track/", payload)
+end
+
+-- ✅ Get Vehicle Track Assignments: check which tracks a vehicle is queued in
+function ApiService.GetVehicleTrackAssignments(vehicleId)
+	if not vehicleId then
+		warn("[ApiService] GetVehicleTrackAssignments: missing vehicleId")
+		return nil
+	end
+
+	return fetchJson(string.format("vehicle/%s/track-assignments/", tostring(vehicleId)))
+end
+
+-- ✅ Join All Tracks: join a vehicle to all four tracks at once
+function ApiService.JoinAllTracks(vehicleId, level, serverId)
+	if not vehicleId or not level or not serverId then
+		warn("[ApiService] JoinAllTracks: missing vehicleId, level, or serverId")
+		return nil
+	end
+
+	local payload = {
+		vehicle_id = tostring(vehicleId),
+		level = level,
+		server_id = tostring(serverId)
+	}
+
+	return postRequest("race/join-all-tracks/", payload)
 end
 
 -- ✅ Create Bet: place a bet on a race
@@ -558,7 +613,6 @@ function ApiService.DeleteNotification(notificationId)
 
 	if success and response.Success then
 		if response.StatusCode == 200 then
-			print("[API] DELETE notification success:", notificationId)
 			return HttpService:JSONDecode(response.Body)
 		elseif response.StatusCode == 404 then
 			warn("[API] Notification not found:", notificationId)

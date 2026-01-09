@@ -1,80 +1,100 @@
+-- NextGui_NextScript.client.luau
+-- Displays player vehicles by level with per-track race joining
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local nextEvent = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("ShowNext")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-local CompletedGui = playerGui:WaitForChild("NextGui")
-local fetchQueueFunc = ReplicatedStorage:WaitForChild("RemoteFunctions"):WaitForChild("FetchTrackQueue")
-local getVehicleNameRF = ReplicatedStorage:WaitForChild("RemoteFunctions"):WaitForChild("GetVehicleName")
+-- RemoteEvents and RemoteFunctions
+local nextEvent = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("ShowNext")
 local fetchVehicles = ReplicatedStorage:WaitForChild("RemoteFunctions"):WaitForChild("FetchVehicles")
 local joinRace = ReplicatedStorage:WaitForChild("RemoteFunctions"):WaitForChild("JoinRace")
-local Utils = require(game.ReplicatedStorage:WaitForChild("Modules"):WaitForChild("ReplicaUtils"))
-local RaceSoundUtils = require(game.ReplicatedStorage:WaitForChild("Modules"):WaitForChild("RaceSoundUtils"))
+local getVehicleTrackAssignments = ReplicatedStorage:WaitForChild("RemoteFunctions"):WaitForChild("GetVehicleTrackAssignments")
+local joinAllTracksRemote = ReplicatedStorage:WaitForChild("RemoteFunctions"):WaitForChild("JoinAllTracks")
 
-local template = Utils.findDescendantByName(CompletedGui, "Template")
-local window = Utils.findDescendantByName(CompletedGui, "Window")
-local scrollingFrame = Utils.findDescendantByName(window, "RaceFrame")
-template.Visible = false
-local vehicleFrame = Utils.findDescendantByName(window, "VehicleFrame")
-local loading = false
-local vehicleTemplate = Utils.findDescendantByName(vehicleFrame, "VehicleTemplate")
-local vehicles = fetchVehicles:InvokeServer()
-local backButton = Utils.findDescendantByName(window, "Back")
-local loadItem
-local dialog = Utils.findDescendantByName(vehicleFrame, "Dialog")
--- Note: Dialog is used instead of NoCars when no vehicles are available
+-- Modules
+local Utils = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("ReplicaUtils"))
+local RaceSoundUtils = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("RaceSoundUtils"))
 
--- Track current track for refreshing after race entry
-local currentTrack = nil
+-- Player references
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local NextGui = playerGui:WaitForChild("NextGui")
 
--- Forward declaration for showNext (defined later in the file)
-local showNext
+-- GUI references
+local window = Utils.findDescendantByName(NextGui, "Window")
+local content = Utils.findDescendantByName(window, "Content")
+local header = Utils.findDescendantByName(content, "Header")
+local body = Utils.findDescendantByName(content, "Body")
+local headerLine = Utils.findDescendantByName(header, "Line")
+local scrollingFrame = Utils.findDescendantByName(body, "ScrollingFrame")
 
-scrollingFrame.Visible = true
-backButton.MouseButton1Click:Connect(function()
-	RaceSoundUtils.PlayButtonPressed()
-	vehicleFrame.Visible = false
-	scrollingFrame.Visible = true
-	backButton.Visible = false
-end)
+-- Level selector buttons
+local leftArrow = Utils.findDescendantByName(headerLine, "Left")
+local rightArrow = Utils.findDescendantByName(headerLine, "Right")
+local levelButton = Utils.findDescendantByName(headerLine, "Race")
+local levelLabel = Utils.findDescendantByName(levelButton, "TextLabel")
+
+-- Templates
+local vehicleTemplate = Utils.findDescendantByName(scrollingFrame, "VehicleTemplate")
+local noVehicles = Utils.findDescendantByName(scrollingFrame, "NoVehicles")
+
+-- Hide templates initially
+if vehicleTemplate then vehicleTemplate.Visible = false end
+if noVehicles then noVehicles.Visible = false end
+
+-- State
+local currentLevel = "Common"
+local levels = {"Common", "Rare", "Epic", "Legendary"}
+local levelIndex = 1
+local tracks = {"Oval", "Road", "Drag", "Dirt"}
+local vehicles = {}
+local isRefreshing = false
+
+-- Color scheme from Utils
+local levelColors = {
+	Common = Color3.fromRGB(6, 123, 202),
+	Rare = Color3.fromRGB(79, 213, 2),
+	Epic = Color3.fromRGB(186, 50, 226),
+	Legendary = Color3.fromRGB(255, 219, 49)
+}
+
+-- Entry fees by level (Common is free, others calculated from base)
+-- These are approximate - actual fees come from backend
+local entryFees = {
+	Common = 0,
+	Rare = 100,
+	Epic = 150,
+	Legendary = 200
+}
+
+-- Green color for "Free" and price text
+local greenColor = Color3.fromRGB(0, 200, 0)
 
 
-local function vehicleEnterRace(race, vehicle)
-	RaceSoundUtils.PlayRev()
-	joinRace:InvokeServer(race.id, vehicle.id)
-	vehicleFrame.Visible = false
-	scrollingFrame.Visible = true
-	backButton.Visible = false
-
-	-- Refresh vehicles
-	vehicles = fetchVehicles:InvokeServer()
-
-	-- Clear old race buttons and refetch queue to get updated race data
-	if currentTrack then
-		for _, child in ipairs(scrollingFrame:GetChildren()) do
-			if child:IsA("TextButton") and child ~= template then
-				child:Destroy()
-			end
-		end
-		showNext(currentTrack)
+-- Update level display in header
+local function updateLevelDisplay()
+	if levelLabel then
+		levelLabel.Text = currentLevel
+		levelLabel.TextColor3 = levelColors[currentLevel] or Color3.fromRGB(255, 255, 255)
 	end
 end
 
--- Helper to display vehicle thumbnail in a ViewportFrame
+
+-- Setup vehicle thumbnail in a ViewportFrame
 local function setupVehicleThumbnail(viewportFrame, vehicle)
 	if not viewportFrame then return end
 
-	-- Clear any existing content
+	-- Clear existing content
 	for _, child in ipairs(viewportFrame:GetChildren()) do
 		if child:IsA("Model") or child:IsA("Camera") then
 			child:Destroy()
 		end
 	end
 
-	-- Try to find the vehicle model template by skin name
+	-- Get car model from ReplicatedStorage.Cars
 	local skinName = vehicle.skin or "Truck_Blue"
-	local carsFolder = game.ReplicatedStorage:FindFirstChild("Cars")
+	local carsFolder = ReplicatedStorage:FindFirstChild("Cars")
 	if not carsFolder then
 		warn("[NextScript] Cars folder not found in ReplicatedStorage")
 		return
@@ -82,7 +102,6 @@ local function setupVehicleThumbnail(viewportFrame, vehicle)
 
 	local carTemplate = carsFolder:FindFirstChild(skinName)
 	if not carTemplate then
-		-- Try default if skin not found
 		carTemplate = carsFolder:FindFirstChild("Truck_Blue")
 		if not carTemplate then
 			warn("[NextScript] Could not find car template for:", skinName)
@@ -94,246 +113,414 @@ local function setupVehicleThumbnail(viewportFrame, vehicle)
 	local carClone = carTemplate:Clone()
 	carClone.Parent = viewportFrame
 
-	-- Create a camera for the viewport
+	-- Apply custom color if vehicle has one
+	if vehicle.color then
+		Utils.applyViewportColor(carClone, vehicle.color)
+	end
+
+	-- Create camera and position it
 	local camera = Instance.new("Camera")
 	camera.Parent = viewportFrame
 	viewportFrame.CurrentCamera = camera
 
-	-- Position the camera to view the car
-	-- Get the car's bounding box to frame it properly
-	local cf, size = carClone:GetBoundingBox()
-	local maxSize = math.max(size.X, size.Y, size.Z)
+	-- Calculate aspect ratio adjustment for tall viewports
+	-- If viewport is taller than wide, we need to increase FOV to show more horizontally
+	local viewportSize = viewportFrame.AbsoluteSize
+	local aspectRatio = viewportSize.X / math.max(viewportSize.Y, 1)
+	local fovMultiplier = 1
+	if aspectRatio < 1 then
+		-- Viewport is taller than wide - increase FOV to compensate
+		fovMultiplier = 1 / aspectRatio
+	end
 
-	-- Position camera at an angle looking at the car (zoomed in 2x)
-	-- Negative X and Z to view from the front/side (rotated 180 from original)
-	local cameraDistance = maxSize * 0.9
-	local cameraOffset = Vector3.new(-cameraDistance * 0.7, cameraDistance * 0.4, -cameraDistance * 0.7)
-	camera.CFrame = CFrame.lookAt(cf.Position + cameraOffset, cf.Position)
+	-- Check for ThumbnailCFrame and ThumbnailFOV values
+	local thumbnailCFrame = carClone:FindFirstChild("ThumbnailCFrame")
+	local thumbnailFOV = carClone:FindFirstChild("ThumbnailFOV")
+
+	if thumbnailCFrame and thumbnailCFrame:IsA("CFrameValue") then
+		camera.CFrame = thumbnailCFrame.Value
+		local baseFOV = 10
+		if thumbnailFOV and thumbnailFOV:IsA("NumberValue") then
+			baseFOV = thumbnailFOV.Value
+		end
+		-- Apply aspect ratio correction to FOV
+		camera.FieldOfView = math.min(baseFOV * fovMultiplier, 70)
+	else
+		-- Fallback: position camera based on bounding box
+		local cf, size = carClone:GetBoundingBox()
+		local maxSize = math.max(size.X, size.Y, size.Z)
+		local cameraDistance = maxSize * 0.9
+		local cameraOffset = Vector3.new(-cameraDistance * 0.7, cameraDistance * 0.4, -cameraDistance * 0.7)
+		camera.CFrame = CFrame.lookAt(cf.Position + cameraOffset, cf.Position)
+		-- Apply aspect ratio correction to FOV
+		camera.FieldOfView = math.min(40 * fovMultiplier, 70)
+	end
 end
 
 
-loadItem = function(item, entry)
-	local name = entry.name
-	local level = entry.level
-	Utils.switchColorIcon(item, level)
-	local nameFrame = Utils.findDescendantByName(item, "Name")
-	local itemLabel = Utils.findDescendantByName(nameFrame, "ItemLabel")
-	local itemLabelStroke = Utils.findDescendantByName(nameFrame, "ItemLabelStroke")
-	item.Name = name
-	itemLabel.Text = name
-	itemLabelStroke.Text = name
-	item.Visible = true
-	return item
+-- Helper to show spinner on a button (creates spinner dynamically like teleport dialog)
+local function showButtonSpinner(button, show)
+	if not button then return end
+
+	local textLabel = Utils.findDescendantByName(button, "TextLabel")
+	local existingSpinner = button:FindFirstChild("SpinnerFrame")
+
+	if show then
+		button.Active = false
+		if textLabel then textLabel.Visible = false end
+
+		-- Create spinner if it doesn't exist
+		if not existingSpinner then
+			local spinnerFrame = Instance.new("Frame")
+			spinnerFrame.Name = "SpinnerFrame"
+			spinnerFrame.Size = UDim2.new(1, 0, 1, 0)
+			spinnerFrame.Position = UDim2.new(0, 0, 0, 0)
+			spinnerFrame.BackgroundTransparency = 1
+			spinnerFrame.BorderSizePixel = 0
+			spinnerFrame.ZIndex = button.ZIndex + 1
+
+			local spinnerImage = Instance.new("ImageLabel")
+			spinnerImage.Name = "SpinnerImage"
+			spinnerImage.Size = UDim2.new(0, 24, 0, 24)
+			spinnerImage.Position = UDim2.new(0.5, -12, 0.5, -12)
+			spinnerImage.BackgroundTransparency = 1
+			spinnerImage.Image = "rbxassetid://101716378951252"
+			spinnerImage.ZIndex = spinnerFrame.ZIndex + 1
+			spinnerImage.Parent = spinnerFrame
+
+			-- Create rotation tween
+			local rotationTween = TweenService:Create(
+				spinnerImage,
+				TweenInfo.new(1, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1),
+				{Rotation = 360}
+			)
+
+			spinnerFrame.Parent = button
+			rotationTween:Play()
+		end
+	else
+		button.Active = true
+		if textLabel then textLabel.Visible = true end
+
+		-- Remove spinner if it exists
+		if existingSpinner then
+			existingSpinner:Destroy()
+		end
+	end
 end
 
 
-local function switchRace(race)
-	print("[NextScript] switchRace called for race level:", race.level, "race id:", race.id)
+-- Forward declaration for refreshDisplay
+local refreshDisplay
 
-	-- Clear existing vehicle frames (but keep VehicleTemplate, NoCars, and Dialog)
-	for _, child in ipairs(vehicleFrame:GetChildren()) do
-		if child:IsA("Frame") and child.Visible and child.Name ~= "Dialog" then
+
+-- Join a vehicle to a specific track
+local function joinVehicleToTrack(vehicle, track, button)
+	RaceSoundUtils.PlayRev()
+
+	-- Show spinner
+	showButtonSpinner(button, true)
+
+	-- Spawn to not block UI
+	task.spawn(function()
+		local result = joinRace:InvokeServer(vehicle.id, track, currentLevel)
+
+		if result and result.error then
+			warn("[NextScript] Failed to join race:", result.error)
+		end
+
+		-- Refresh vehicles and display
+		vehicles = fetchVehicles:InvokeServer() or {}
+		refreshDisplay()
+	end)
+end
+
+
+-- Join a vehicle to all tracks using the batch endpoint
+local function joinVehicleToAllTracks(vehicle, button)
+	RaceSoundUtils.PlayRev()
+
+	-- Show spinner
+	showButtonSpinner(button, true)
+
+	-- Spawn to not block UI
+	task.spawn(function()
+		local result = joinAllTracksRemote:InvokeServer(vehicle.id, currentLevel)
+
+		if result and result.error then
+			warn("[NextScript] Failed to join all tracks:", result.error)
+		end
+
+		-- Refresh vehicles and display
+		vehicles = fetchVehicles:InvokeServer() or {}
+		refreshDisplay()
+	end)
+end
+
+
+-- Format button text with price in green
+local function formatPriceText(baseText, price)
+	if price == 0 then
+		return baseText .. " - Free"
+	else
+		return baseText .. " - $" .. tostring(price)
+	end
+end
+
+
+-- Create a track row from the Template
+local function createTrackRow(racesFrame, vehicle, track, isJoined, entryFee)
+	local template = Utils.findDescendantByName(racesFrame, "Template")
+	if not template then
+		warn("[NextScript] Template not found in Races frame")
+		return nil
+	end
+
+	local row = template:Clone()
+	row.Name = track
+	row.Visible = true
+
+	-- Set track name with level color
+	local trackLabel = Utils.findDescendantByName(row, "Track")
+	if trackLabel then
+		trackLabel.Text = track
+		trackLabel.TextColor3 = levelColors[currentLevel] or Color3.fromRGB(255, 255, 255)
+	end
+
+	-- Get button references
+	local joinedButton = Utils.findDescendantByName(row, "Joined")
+	local joinButton = Utils.findDescendantByName(row, "Join")
+
+	if isJoined then
+		-- Show Joined, hide Join
+		if joinedButton then joinedButton.Visible = true end
+		if joinButton then joinButton.Visible = false end
+	else
+		-- Show Join, hide Joined
+		if joinedButton then joinedButton.Visible = false end
+		if joinButton then
+			joinButton.Visible = true
+
+			-- Format join button text
+			local joinLabel = Utils.findDescendantByName(joinButton, "TextLabel")
+			if joinLabel then
+				joinLabel.Text = formatPriceText("Join", entryFee)
+			end
+
+			-- Connect click handler
+			joinButton.MouseButton1Click:Connect(function()
+				joinVehicleToTrack(vehicle, track, joinButton)
+			end)
+		end
+	end
+
+	row.Parent = racesFrame
+	return row
+end
+
+
+-- Load a vehicle into the template
+local function loadVehicle(vehicle, trackAssignments)
+	if not vehicleTemplate then
+		warn("[NextScript] VehicleTemplate not found")
+		return nil
+	end
+
+	local clone = vehicleTemplate:Clone()
+	clone.Name = vehicle.id or vehicle.name
+	clone.Visible = true
+
+	-- Find Content frame
+	local contentFrame = Utils.findDescendantByName(clone, "Content")
+	if not contentFrame then
+		contentFrame = clone -- Fallback if no Content frame
+	end
+
+	-- Set vehicle name with level color
+	local topFrame = Utils.findDescendantByName(contentFrame, "Top")
+	if topFrame then
+		local nameLabel = Utils.findDescendantByName(topFrame, "Name")
+		if nameLabel and nameLabel:IsA("TextLabel") then
+			nameLabel.Text = vehicle.name or "Unknown"
+			nameLabel.TextColor3 = levelColors[currentLevel] or Color3.fromRGB(255, 255, 255)
+		elseif nameLabel then
+			local textLabel = Utils.findDescendantByName(nameLabel, "TextLabel")
+			if textLabel then
+				textLabel.Text = vehicle.name or "Unknown"
+				textLabel.TextColor3 = levelColors[currentLevel] or Color3.fromRGB(255, 255, 255)
+			end
+		end
+	end
+
+	-- Setup thumbnail
+	local thumbnail = Utils.findDescendantByName(contentFrame, "Thumbnail")
+	if thumbnail then
+		setupVehicleThumbnail(thumbnail, vehicle)
+	end
+
+	-- Get entry fee for current level
+	local entryFee = entryFees[currentLevel] or 0
+
+	-- Setup "Join All" button - search entire clone for "JoinAll"
+	local joinAllButton = Utils.findDescendantByName(clone, "JoinAll")
+
+	if joinAllButton then
+		-- Ensure button is active and interactable
+		joinAllButton.Active = true
+		if joinAllButton:IsA("GuiButton") then
+			joinAllButton.AutoButtonColor = true
+		end
+
+		local joinAllLabel = Utils.findDescendantByName(joinAllButton, "TextLabel")
+		if joinAllLabel then
+			joinAllLabel.Text = "Join All"
+		end
+
+		joinAllButton.MouseButton1Click:Connect(function()
+			joinVehicleToAllTracks(vehicle, joinAllButton)
+		end)
+	else
+		warn("[NextScript] JoinAll button not found in vehicle template")
+	end
+
+	-- Setup track rows
+	local racesFrame = Utils.findDescendantByName(contentFrame, "Races")
+	if racesFrame then
+		-- Hide the template
+		local raceTemplate = Utils.findDescendantByName(racesFrame, "Template")
+		if raceTemplate then
+			raceTemplate.Visible = false
+		end
+
+		-- Create a row for each track
+		for _, track in ipairs(tracks) do
+			local isJoined = trackAssignments and trackAssignments[track] ~= nil
+			createTrackRow(racesFrame, vehicle, track, isJoined, entryFee)
+		end
+	end
+
+	clone.Parent = scrollingFrame
+	return clone
+end
+
+
+-- Main refresh function
+function refreshDisplay()
+	if not scrollingFrame then
+		warn("[NextScript] ScrollingFrame not found")
+		return
+	end
+
+	-- Clear existing vehicle clones (keep templates)
+	for _, child in ipairs(scrollingFrame:GetChildren()) do
+		if child:IsA("Frame") and child ~= vehicleTemplate and child ~= noVehicles then
 			child:Destroy()
 		end
 	end
 
-	backButton.Visible = true
-	scrollingFrame.Visible = false
-	vehicleFrame.Visible = true
-	dialog.Visible = true -- Show dialog initially, hide if vehicles are found
+	-- Update level display in header
+	updateLevelDisplay()
 
-	-- Check if player already has a vehicle in this race
-	local playerVehicleIds = {}
+	-- Filter vehicles by current level
+	local levelVehicles = {}
 	for _, vehicle in ipairs(vehicles) do
-		playerVehicleIds[vehicle.id] = true
-	end
-
-	-- Check race queue slots (vehicle1-vehicle4)
-	local alreadyEntered = false
-	for _, slotKey in ipairs({"vehicle1", "vehicle2", "vehicle3", "vehicle4"}) do
-		local vehicleId = race[slotKey]
-		if vehicleId and playerVehicleIds[vehicleId] then
-			alreadyEntered = true
-			print("[NextScript] Player already entered race with vehicle:", vehicleId)
-			break
+		if vehicle.level == currentLevel then
+			table.insert(levelVehicles, vehicle)
 		end
 	end
 
-	-- If player already entered, show dialog and return early
-	if alreadyEntered then
-		dialog.Visible = true
-		print("[NextScript] Player already entered this race - showing Dialog")
-		return
-	end
-
-	local availableCount = 0
-	print("[NextScript] Checking", #vehicles, "vehicles for race level:", race.level)
-
-	for _, vehicle in ipairs(vehicles) do
-		print("[NextScript] Vehicle:", vehicle.name, "level:", vehicle.level, "racing:", vehicle.racing)
-		if not vehicle.racing and vehicle.level == race.level then
-			availableCount = availableCount + 1
-			dialog.Visible = false
-			local vehicleClone = vehicleTemplate:Clone()
-			vehicleClone.Visible = true
-			loadItem(vehicleClone, vehicle)
-			vehicleClone.Name = vehicle.id
-			vehicleClone.Parent = vehicleFrame
-
-			-- Set up the vehicle thumbnail in the Image viewport
-			local imageViewport = Utils.findDescendantByName(vehicleClone, "Image")
-			setupVehicleThumbnail(imageViewport, vehicle)
-
-			local raceButton = Utils.findDescendantByName(vehicleClone, "TextButton")
-			raceButton.MouseButton1Click:Connect(function()
-				vehicleEnterRace(race, vehicle)
-			end)
+	-- Show NoVehicles or populate list
+	if #levelVehicles == 0 then
+		if noVehicles then
+			noVehicles.Visible = true
 		end
-	end
-
-	print("[NextScript] Found", availableCount, "available vehicles for race level:", race.level)
-
-	-- If no vehicles available, show Dialog frame (not NoCars)
-	if availableCount == 0 then
-		dialog.Visible = true
-		print("[NextScript] Showing Dialog frame - no vehicles available for this race level")
-	end
-end
-
-
-showNext = function(track)
-	print("[NextScript] showNext called for track:", track)
-
-	if loading then
-		print("[NextScript] Already loading, skipping")
-		return
-	end
-	loading = true
-
-	-- Store current track for refreshing after race entry
-	currentTrack = track
-
-	print("[NextScript] Fetching track queue...")
-	local trackQueue = fetchQueueFunc:InvokeServer(track) or {}
-	print("[NextScript] Received", #trackQueue, "races in queue for track:", track)
-
-	local shownCount = 0
-	local skippedFinished = 0
-	local skippedReady = 0
-
-	for i, each in ipairs(trackQueue) do
-		print("[NextScript] Race", i, "- number:", each.number, "level:", each.level, "race_finished:", each.race_finished, "ready:", each.ready)
-
-		if each.race_finished then
-			skippedFinished = skippedFinished + 1
-		elseif each.ready then
-			skippedReady = skippedReady + 1
-		end
-
-		if not each.race_finished and not each.ready then
-			shownCount = shownCount + 1
-			local clone = template:Clone()
-
-			-- compute level safely
-			local level = each.level or "common"
-			local levelLower = string.lower(level)
-			local levelDisplay = string.upper(string.sub(levelLower, 1, 1)) .. string.sub(levelLower, 2)
-
-			-- shorten long labels to avoid spacing issues
-			if levelLower == "legendary" then
-				levelDisplay = "Leg"
-			elseif levelLower == "common" then
-				levelDisplay = "Com"
-			end
-
-			-- Title label text + color
-			local titleLabel = Utils.findDescendantByName(clone, "TitleLabel")
-			if titleLabel then
-				titleLabel.Text = levelDisplay .. " #" .. (each.number or "?")
-				if levelLower == "common" then
-					titleLabel.TextColor3 = Color3.fromRGB(6, 123, 202)
-				elseif levelLower == "rare" then
-					titleLabel.TextColor3 = Color3.fromRGB(79, 213, 2)
-				elseif levelLower == "epic" then
-					titleLabel.TextColor3 = Color3.fromRGB(186, 50, 226)
-				elseif levelLower == "legendary" then
-					titleLabel.TextColor3 = Color3.fromRGB(255, 219, 49)
-				else
-					titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-				end
-			end
-
-			-- Build results list (in order vehicle1..vehicle4)
-			local sortedResults = {}
-			for _, key in ipairs({"vehicle1", "vehicle2", "vehicle3", "vehicle4"}) do
-				local id = each[key]
-				if id then
-					local ok, nameOrErr = pcall(function()
-						return getVehicleNameRF:InvokeServer(id)
-					end)
-					table.insert(sortedResults, ok and nameOrErr or "Unknown")
-				end
-			end
-
-			-- Fill position labels (Drag shows only First/Second)
-			local positions = {"First", "Second", "Third", "Fourth"}
-			for posIndex, posName in ipairs(positions) do
-				if track ~= "Drag" or posName == "First" or posName == "Second" then
-					local posLabel = Utils.findDescendantByName(clone, posName .. "Label")
-					if posLabel and posLabel:IsA("TextLabel") then
-						local result = sortedResults[posIndex]
-						posLabel.Text = result or "Open"
-					end
-				end
-			end
-			local prizeLabel = Utils.findDescendantByName(clone, "PrizeLabel")
-			prizeLabel.TextColor3 = Color3.fromRGB(0, 200, 0)
-			prizeLabel.Text = "Entry $" .. each.entry_fee
-			clone.MouseButton1Click:Connect(function()
-				RaceSoundUtils.PlayButtonPressed()
-				switchRace(each)
-			end)
-			clone.Parent = scrollingFrame
-			clone.Visible = true
-		end
-	end
-
-	print("[NextScript] Summary - Shown:", shownCount, "Skipped (finished):", skippedFinished, "Skipped (ready):", skippedReady)
-
-	if shownCount == 0 then
-		print("[NextScript] WARNING: No races shown! Total in queue:", #trackQueue)
-	end
-
-	loading = false
-end
-
-
-nextEvent.OnClientEvent:Connect(function(show, track)
-	print("[NextScript] Event received - show:", show, "track:", track)
-	window.Visible = show == true
-	if window.Visible then
-		print("[NextScript] Window visible, resetting view state and clearing old rows")
-
-		-- Reset view state to show race list (not vehicle selection)
-		vehicleFrame.Visible = false
-		scrollingFrame.Visible = true
-		backButton.Visible = false
-
-		-- Refresh vehicles to get latest data
-		vehicles = fetchVehicles:InvokeServer()
-		print("[NextScript] Refreshed vehicles, now have", #vehicles, "vehicles")
-
-		-- clear old rows first
-		local clearedCount = 0
-		for _, child in ipairs(scrollingFrame:GetChildren()) do
-			if child:IsA("TextButton") and child ~= template then
-				child:Destroy()
-				clearedCount = clearedCount + 1
-			end
-		end
-		print("[NextScript] Cleared", clearedCount, "old rows")
-		showNext(track)
 	else
-		print("[NextScript] Window hidden")
+		if noVehicles then
+			noVehicles.Visible = false
+		end
+
+		for _, vehicle in ipairs(levelVehicles) do
+			-- Get track assignments for this vehicle
+			local assignments = getVehicleTrackAssignments:InvokeServer(vehicle.id)
+			local assignmentsMap = assignments and assignments.assignments or {}
+			loadVehicle(vehicle, assignmentsMap)
+		end
+
+		-- Adjust canvas size after loading
+		RunService.RenderStepped:Wait()
+		local listLayout = scrollingFrame:FindFirstChildOfClass("UIListLayout")
+		local gridLayout = scrollingFrame:FindFirstChildOfClass("UIGridLayout")
+		local layout = listLayout or gridLayout
+
+		if layout then
+			local padding = scrollingFrame:FindFirstChildOfClass("UIPadding")
+			local totalHeight = layout.AbsoluteContentSize.Y
+			if padding then
+				totalHeight = totalHeight + padding.PaddingTop.Offset + padding.PaddingBottom.Offset
+			end
+			scrollingFrame.CanvasSize = UDim2.new(0, 0, 0, totalHeight)
+		end
+	end
+end
+
+
+-- Cycle level left
+local function cycleLeft()
+	RaceSoundUtils.PlayButtonPressed()
+	levelIndex = levelIndex - 1
+	if levelIndex < 1 then
+		levelIndex = #levels
+	end
+	currentLevel = levels[levelIndex]
+	refreshDisplay()
+end
+
+
+-- Cycle level right
+local function cycleRight()
+	RaceSoundUtils.PlayButtonPressed()
+	levelIndex = levelIndex + 1
+	if levelIndex > #levels then
+		levelIndex = 1
+	end
+	currentLevel = levels[levelIndex]
+	refreshDisplay()
+end
+
+
+-- Connect level selector buttons
+if leftArrow then
+	leftArrow.MouseButton1Click:Connect(cycleLeft)
+end
+
+if rightArrow then
+	rightArrow.MouseButton1Click:Connect(cycleRight)
+end
+
+
+-- Main event handler
+-- Receives: show (boolean), level (string, optional)
+nextEvent.OnClientEvent:Connect(function(show, level)
+	if window then
+		window.Visible = show == true
+	end
+
+	if show then
+		-- Set level if provided
+		if level and type(level) == "string" then
+			for i, l in ipairs(levels) do
+				if l == level then
+					currentLevel = level
+					levelIndex = i
+					break
+				end
+			end
+		end
+
+		-- Refresh vehicles from server
+		vehicles = fetchVehicles:InvokeServer() or {}
+
+		-- Refresh display
+		refreshDisplay()
 	end
 end)

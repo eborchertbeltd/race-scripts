@@ -1,3 +1,4 @@
+--#RACE
 -- ApiService ModuleScript
 local HttpService = game:GetService("HttpService")
 local ApiService = {}
@@ -179,6 +180,24 @@ function ApiService.UpdatePlayerMusic(robloxUserId, musicEnabled)
 end
 
 
+function ApiService.PurchaseSkinWithCash(robloxUserId, skinId)
+	if not robloxUserId then
+		warn("[ApiService] PurchaseSkinWithCash: missing robloxUserId")
+		return nil
+	end
+	if not skinId then
+		warn("[ApiService] PurchaseSkinWithCash: missing skinId")
+		return nil
+	end
+	local payload = {
+		player_roblox_id = robloxUserId,
+		vehicle_skin_id = skinId
+	}
+	local url = "player-vehicle-skins/purchase-skin-with-cash/"
+	return postRequest(url, payload)
+end
+
+
 function ApiService.PatchVehicleSlotted(vehicleId, slottedValue, num)
 
 	local payload = {
@@ -217,16 +236,6 @@ function ApiService.craftItem(playerId, itemId)
 		user_id = playerId
 	}
 	return postRequest("construct-part/", payload)
-end
-
-
--- ✅ Load all template data (matches: blueprint-templates/, material-templates/, part-templates/)
-function ApiService.LoadGameData()
-	local blueprints = fetchJson("blueprint-templates/") or {}
-	local materials = fetchJson("material-templates/") or {}
-	local parts = fetchJson("part-templates/") or {}
-	print(string.format("✅ Loaded %d blueprints, %d materials, %d parts.", #blueprints, #materials, #parts))
-	return {blueprints, materials, parts}
 end
 
 
@@ -352,6 +361,143 @@ function ApiService.UpdateVehicle(vehicleId, partsDict)
 end
 
 
+-- ✅ RaceQueue: get queue summary for a server
+function ApiService.GetRaceQueue(serverId)
+	if not serverId then
+		warn("[ApiService] Missing serverId for race queue fetch")
+		return nil
+	end
+	return fetchJson(string.format("race-queue/%s/summary/", serverId))
+end
+
+
+-- ✅ RaceQueue: create queue entry (track_id, server_id, optional level)
+function ApiService.CreateRaceQueue(trackId, serverId, level)
+	if not trackId or not serverId then
+		warn("[ApiService] Missing trackId/serverId for race queue create")
+		return nil
+	end
+	local payload = {
+		track_id = tostring(trackId),
+		server_id = tostring(serverId),
+		level = level or "Common",
+	}
+	return postRequest("race-queue/create/", payload)
+end
+
+
+-- ✅ Race: update fields on a race (vehicles, times, places, finished flag)
+function ApiService.UpdateRace(raceId, fields)
+	if not raceId or type(fields) ~= "table" then
+		warn("[ApiService] UpdateRace: missing raceId or fields table")
+		return nil
+	end
+	local url = string.format("race/%s/update/", tostring(raceId))
+	return patchRequest(url, fields)
+end
+
+
+-- ✅ Track: get by name
+function ApiService.GetTrackByName(trackName)
+	if not trackName or trackName == "" then
+		warn("[ApiService] GetTrackByName: missing trackName")
+		return nil
+	end
+	local encoded = HttpService:UrlEncode(trackName)
+	return fetchJson(string.format("track/%s/", encoded))
+end
+
+
+-- ✅ Track: list all tracks
+function ApiService.GetTracks()
+	return fetchJson("tracks/")
+end
+
+-- ✅ Vehicle: get by id
+function ApiService.GetVehicleById(vehicleId)
+	if not vehicleId then
+		warn("[ApiService] GetVehicleById: missing id")
+		return nil
+	end
+	return fetchJson(string.format("vehicle/%s/", tostring(vehicleId)))
+end
+
+-- ✅ Join Race: join a race with a vehicle
+function ApiService.JoinRace(raceId, vehicleId)
+	if not raceId or not vehicleId then
+		warn("[ApiService] JoinRace: missing raceId or vehicleId")
+		return nil
+	end
+
+	local payload = {
+		race_id = tostring(raceId),
+		vehicle_id = tostring(vehicleId)
+	}
+
+	return postRequest("race/join/", payload)
+end
+
+-- ✅ Create Bet: place a bet on a race
+function ApiService.CreateBet(playerRobloxId, raceId, betOn, amount)
+	if not playerRobloxId or not raceId or not betOn then
+		warn("[ApiService] CreateBet: missing required parameters")
+		return nil
+	end
+
+	local payload = {
+		player_roblox_id = tostring(playerRobloxId),
+		race_id = tostring(raceId),
+		bet_on = tostring(betOn),
+		amount = amount or 0
+	}
+
+	return postRequest("bets/create/", payload)
+end
+
+-- ✅ Get Player Bets: get all bets for a player
+function ApiService.GetPlayerBets(playerRobloxId)
+	if not playerRobloxId then
+		warn("[ApiService] GetPlayerBets: missing playerRobloxId")
+		return nil
+	end
+
+	return fetchJson(string.format("bets/?player_roblox_id=%s", tostring(playerRobloxId)))
+end
+
+-- ✅ Get Race Bets: get all bets for a specific race
+function ApiService.GetRaceBets(raceId)
+	if not raceId then
+		warn("[ApiService] GetRaceBets: missing raceId")
+		return nil
+	end
+
+	return fetchJson(string.format("race/%s/bets/", tostring(raceId)))
+end
+
+-- ✅ Get Bet: get a specific bet by ID
+function ApiService.GetBet(betId, playerRobloxId)
+	if not betId or not playerRobloxId then
+		warn("[ApiService] GetBet: missing betId or playerRobloxId")
+		return nil
+	end
+
+	return fetchJson(string.format("bets/%s/?player_roblox_id=%s", tostring(betId), tostring(playerRobloxId)))
+end
+
+-- ✅ Delete Bet: delete a bet by ID
+function ApiService.DeleteBet(betId, playerRobloxId)
+	if not betId or not playerRobloxId then
+		warn("[ApiService] DeleteBet: missing betId or playerRobloxId")
+		return nil
+	end
+
+	local payload = {
+		player_roblox_id = tostring(playerRobloxId)
+	}
+
+	return postRequest(string.format("bets/%s/delete/", tostring(betId)), payload)
+end
+
 -- ✅ Get Player Notifications: get notifications for a player
 function ApiService.GetPlayerNotifications(playerRobloxId, filters)
 	if not playerRobloxId then
@@ -381,8 +527,7 @@ function ApiService.GetPlayerNotifications(playerRobloxId, filters)
 	end
 
 	local queryString = table.concat(queryParams, "&")
-	local result = fetchJson("notifications/?" .. queryString)
-	return result
+	return fetchJson("notifications/?" .. queryString)
 end
 
 -- ✅ Mark Notification as Read: mark a notification as read
@@ -447,152 +592,6 @@ function ApiService.DeleteNotification(notificationId)
 	end
 end
 
-
--- ✅ RaceQueue: get queue summary for a server
-function ApiService.GetRaceQueue(serverId)
-	if not serverId then
-		warn("[ApiService] Missing serverId for race queue fetch")
-		return nil
-	end
-	return fetchJson(string.format("race-queue/%s/summary/", serverId))
-end
-
-
--- ✅ RaceQueue: create queue entry (track_id, server_id, optional level)
-function ApiService.CreateRaceQueue(trackId, serverId, level)
-	if not trackId or not serverId then
-		warn("[ApiService] Missing trackId/serverId for race queue create")
-		return nil
-	end
-	local payload = {
-		track_id = tostring(trackId),
-		server_id = tostring(serverId),
-		level = level or "Common",
-	}
-	return postRequest("race-queue/create/", payload)
-end
-
-
--- ✅ Race: update fields on a race (vehicles, times, places, finished flag)
-function ApiService.UpdateRace(raceId, fields)
-	if not raceId or type(fields) ~= "table" then
-		warn("[ApiService] UpdateRace: missing raceId or fields table")
-		return nil
-	end
-	local url = string.format("race/%s/update/", tostring(raceId))
-	return patchRequest(url, fields)
-end
-
-
--- ✅ Track: get by name
-function ApiService.GetTrackByName(trackName)
-	if not trackName or trackName == "" then
-		warn("[ApiService] GetTrackByName: missing trackName")
-		return nil
-	end
-	local encoded = HttpService:UrlEncode(trackName)
-	return fetchJson(string.format("track/%s/", encoded))
-end
-
-
--- ✅ Track: list all tracks
-function ApiService.GetTracks()
-	return fetchJson("tracks/")
-end
-
-
--- ✅ Vehicle: get by id
-function ApiService.GetVehicleById(vehicleId)
-	if not vehicleId then
-		warn("[ApiService] GetVehicleById: missing id")
-		return nil
-	end
-	return fetchJson(string.format("vehicle/%s/", tostring(vehicleId)))
-end
-
-
--- ✅ Join Race: join a race with a vehicle
-function ApiService.JoinRace(raceId, vehicleId)
-	if not raceId or not vehicleId then
-		warn("[ApiService] JoinRace: missing raceId or vehicleId")
-		return nil
-	end
-
-	local payload = {
-		race_id = tostring(raceId),
-		vehicle_id = tostring(vehicleId)
-	}
-
-	return postRequest("race/join/", payload)
-end
-
-
--- ✅ Create Bet: place a bet on a race
-function ApiService.CreateBet(playerRobloxId, raceId, betOn, amount)
-	if not playerRobloxId or not raceId or not betOn then
-		warn("[ApiService] CreateBet: missing required parameters")
-		return nil
-	end
-
-	local payload = {
-		player_roblox_id = tostring(playerRobloxId),
-		race_id = tostring(raceId),
-		bet_on = tostring(betOn),
-		amount = amount or 0
-	}
-
-	return postRequest("bets/create/", payload)
-end
-
-
--- ✅ Get Player Bets: get all bets for a player
-function ApiService.GetPlayerBets(playerRobloxId)
-	if not playerRobloxId then
-		warn("[ApiService] GetPlayerBets: missing playerRobloxId")
-		return nil
-	end
-
-	return fetchJson(string.format("bets/?player_roblox_id=%s", tostring(playerRobloxId)))
-end
-
-
--- ✅ Get Race Bets: get all bets for a specific race
-function ApiService.GetRaceBets(raceId)
-	if not raceId then
-		warn("[ApiService] GetRaceBets: missing raceId")
-		return nil
-	end
-
-	return fetchJson(string.format("race/%s/bets/", tostring(raceId)))
-end
-
-
--- ✅ Get Bet: get a specific bet by ID
-function ApiService.GetBet(betId, playerRobloxId)
-	if not betId or not playerRobloxId then
-		warn("[ApiService] GetBet: missing betId or playerRobloxId")
-		return nil
-	end
-
-	return fetchJson(string.format("bets/%s/?player_roblox_id=%s", tostring(betId), tostring(playerRobloxId)))
-end
-
-
--- ✅ Delete Bet: delete a bet by ID
-function ApiService.DeleteBet(betId, playerRobloxId)
-	if not betId or not playerRobloxId then
-		warn("[ApiService] DeleteBet: missing betId or playerRobloxId")
-		return nil
-	end
-
-	local payload = {
-		player_roblox_id = tostring(playerRobloxId)
-	}
-
-	return postRequest(string.format("bets/%s/delete/", tostring(betId)), payload)
-end
-
-
 -- ✅ Update Vehicle Skin: change a vehicle's skin
 function ApiService.UpdateVehicleSkin(vehicleId, skinName)
 	if not vehicleId or not skinName then
@@ -653,19 +652,12 @@ function ApiService.GrantPlayerVehicleSkin(robloxId, vehicleSkinId)
 	return postRequest("player-vehicle-skins/create/", payload)
 end
 
--- ✅ Update Player Play Time: increment total play time by given seconds
-function ApiService.UpdatePlayerPlayTime(robloxUserId, playTimeSeconds)
-	if not robloxUserId then
-		warn("[ApiService] UpdatePlayerPlayTime: missing robloxUserId")
-		return nil
-	end
-
-	local payload = {
-		play_time_seconds = math.floor(playTimeSeconds)
-	}
-
-	local url = string.format("player/%d/play-time/", robloxUserId)
-	return postRequest(url, payload)
+-- ✅ Load Game Data: fetch all blueprint, material, and part templates
+function ApiService.LoadGameData()
+	local blueprints = getRequest("blueprint-templates/") or {}
+	local materials = getRequest("material-templates/") or {}
+	local parts = getRequest("part-templates/") or {}
+	return {blueprints, materials, parts}
 end
 
 return ApiService

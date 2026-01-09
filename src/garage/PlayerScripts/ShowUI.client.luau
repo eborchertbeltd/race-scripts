@@ -18,6 +18,33 @@ local showSkinEV = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("
 local purchaseSkinUI = player:WaitForChild("PlayerGui"):WaitForChild("PurchaseSkinUI"):WaitForChild("Window")
 local showPurchaseSkinUI = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("ShowPurchaseSkinUI")
 local showPartUI = player:WaitForChild("PlayerGui"):WaitForChild("BaseGui"):WaitForChild("Canvas"):WaitForChild("Frame"):WaitForChild("PartsButton")
+local inventoryUI = player:WaitForChild("PlayerGui"):WaitForChild("InventoryUI"):WaitForChild("Window")
+-- Additional UI windows to close when leaving garage
+local vehicleGuiWindow = player:WaitForChild("PlayerGui"):WaitForChild("VehicleGui"):WaitForChild("Window")
+local skinGuiWindow = player:WaitForChild("PlayerGui"):WaitForChild("SkinGui"):WaitForChild("Window")
+local setCarWindow = player:WaitForChild("PlayerGui"):WaitForChild("SetCar"):WaitForChild("Window")
+
+-- Mutually exclusive UIs - only one can be visible at a time
+local exclusiveUIs = {craftingUI, vehicleGuiWindow, skinGuiWindow, setCarWindow, inventoryUI}
+
+-- Helper function to hide all exclusive UIs except the one being shown
+local function hideOtherUIs(exceptUI)
+	for _, ui in ipairs(exclusiveUIs) do
+		if ui ~= exceptUI then
+			ui.Visible = false
+		end
+	end
+end
+
+-- Set up listeners for mutual exclusivity
+for _, ui in ipairs(exclusiveUIs) do
+	ui:GetPropertyChangedSignal("Visible"):Connect(function()
+		if ui.Visible then
+			hideOtherUIs(ui)
+		end
+	end)
+end
+
 gui.Visible = false
 blueprintGui.Visible = false
 partGui.Visible = false
@@ -49,6 +76,15 @@ end)
 showBuildEV.OnClientEvent:Connect(function(show, _)
 	showBuildCar.Visible = show == true
 	showPartUI.Visible = show == true
+
+	-- Close all related UIs when leaving the garage
+	if not show then
+		craftingUI.Visible = false
+		vehicleGuiWindow.Visible = false
+		skinGuiWindow.Visible = false
+		setCarWindow.Visible = false
+		inventoryUI.Visible = false
+	end
 end)
 
 showSkinEV.OnClientEvent:Connect(function(show, _)

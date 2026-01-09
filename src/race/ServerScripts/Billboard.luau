@@ -11,6 +11,21 @@ task.wait(5)
 -- Server ID for this server
 local SERVER_ID = game.JobId ~= "" and game.JobId or "local-server"-- You may need to adjust this based on your server configuration
 
+-- Store live race positions for each track (updated by race scripts)
+local liveRacePositions = {}
+
+-- Helper function to generate a consistent random color for a player name (module level)
+local function getPlayerColorGlobal(name)
+	local hash = 0
+	for i = 1, #name do
+		hash = hash + string.byte(name, i)
+	end
+	local r = ((hash * 37) % 156) + 100
+	local g = ((hash * 73) % 156) + 100
+	local b = ((hash * 127) % 156) + 100
+	return Color3.fromRGB(r, g, b)
+end
+
 
 local function updateFromRaceQueue(trackName, raceQueue)
 	--print("[Billboard] Updating race queue display for track:", trackName)
@@ -347,12 +362,74 @@ local function updateFromRaceQueue(trackName, raceQueue)
 		end
 	end
 
-	-- Update Current race (Current1)
+	-- Update Current race (Current1) - use live positions if available
 	local currentPart = getPartByNamePattern(scoresModel, "^Current1$")
 	if currentPart then
 		if currentRace then
-			local npcPool = parseNPCPool(currentRace)
-			updateScorePart(currentPart, currentRace, npcPool, trackName == "Drag")
+			-- Check for live positions from race script
+			local livePositions = liveRacePositions[trackName]
+			if livePositions and #livePositions > 0 then
+				-- Use live sorted positions
+				local surfaceGui = currentPart:FindFirstChild("SurfaceGui")
+				if surfaceGui then
+					local frame = surfaceGui:FindFirstChild("Frame")
+					if frame then
+						-- Update title
+						local titleFrame = frame:FindFirstChild("Title")
+						if titleFrame then
+							local titleTextFrame = titleFrame:FindFirstChild("Text")
+							if titleTextFrame then
+								local titleTextLabel = titleTextFrame:FindFirstChild("TextLabel")
+								if titleTextLabel then
+									setTitleWithColor(titleTextLabel, currentRace)
+								end
+							end
+						end
+
+						-- Update positions with live data
+						local positions = {"First", "Second", "Third", "Fourth"}
+						local positionCount = (trackName == "Drag") and 2 or 4
+
+						for i, posName in ipairs(positions) do
+							local posFrame = frame:FindFirstChild(posName)
+							if posFrame then
+								local textFrame = posFrame:FindFirstChild("Text")
+								if textFrame then
+									local textLabel = textFrame:FindFirstChild("TextLabel")
+									if textLabel then
+										if i <= positionCount and livePositions[i] then
+											local posData = livePositions[i]
+											local name = "TBD"
+											local isNPC = false
+
+											if type(posData) == "table" then
+												name = posData.name or "TBD"
+												isNPC = (posData.competitor_type == "npc")
+											elseif type(posData) == "string" then
+												name = posData
+												isNPC = string.sub(name, 1, 4) == "npc-"
+											end
+
+											textLabel.Text = tostring(i) .. " " .. name
+											if isNPC then
+												textLabel.TextColor3 = Color3.fromRGB(100, 150, 255)
+											else
+												textLabel.TextColor3 = getPlayerColorGlobal(name)
+											end
+										else
+											textLabel.Text = ""
+										end
+									end
+								end
+							end
+						end
+					end
+				end
+			else
+				-- Fall back to vehicle slot order
+				local npcPool = parseNPCPool(currentRace)
+				updateScorePart(currentPart, currentRace, npcPool, trackName == "Drag")
+			end
 		else
 			-- Clear the part if no current race
 			clearScorePart(currentPart)
@@ -672,6 +749,44 @@ function Billboard.UpdateAllTracks()
 
 	print("[Billboard] One-off update completed for all tracks")
 	return true
+end
+
+-- Function to update Current section with live race positions
+-- Called by race scripts during the race to show current standings
+function Billboard.UpdateCurrentPositions(trackName, positions)
+	if not trackName or type(trackName) ~= "string" then
+		return false
+	end
+
+	-- Validate track name
+	local validTracks = {"Oval", "Road", "Dirt", "Drag"}
+	local isValidTrack = false
+	for _, validTrack in ipairs(validTracks) do
+		if trackName == validTrack then
+			isValidTrack = true
+			break
+		end
+	end
+
+	if not isValidTrack then
+		return false
+	end
+
+	-- Store the live positions
+	liveRacePositions[trackName] = positions
+
+	-- Trigger an update of the race queue display (which will use live positions for Current1)
+	local raceQueue = ServerData.GetRaceQueueForTrack(SERVER_ID, trackName)
+	updateFromRaceQueue(trackName, raceQueue)
+
+	return true
+end
+
+-- Function to clear live positions when race ends
+function Billboard.ClearCurrentPositions(trackName)
+	if trackName then
+		liveRacePositions[trackName] = nil
+	end
 end
 
 -- Export the Billboard module for other scripts to use

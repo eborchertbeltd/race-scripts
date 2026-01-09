@@ -19,8 +19,11 @@ local btnPlayer = GUI:WaitForChild("Return")
 local btnLeader = GUI:WaitForChild("Leader") -- LeaderCam button (optional)
 local camButtonsFolder = GUI:FindFirstChild("CamButtons") -- optional
 
--- Stats frame elements
-local StatsFrame = MainFrame:FindFirstChild("Stats")
+-- Stats frame elements (Stats is inside Frame which is inside MainFrame)
+local innerFrame = MainFrame:FindFirstChild("Frame")
+local StatsFrame = innerFrame and innerFrame:FindFirstChild("Stats")
+local backButton = innerFrame and innerFrame:FindFirstChild("Back")
+local forwardButton = innerFrame and innerFrame:FindFirstChild("Forward")
 local statsContent = StatsFrame and StatsFrame:FindFirstChild("Content")
 local dataFrame = statsContent and statsContent:FindFirstChild("Data")
 local positionsFrame = statsContent and statsContent:FindFirstChild("Positions")
@@ -93,6 +96,8 @@ local finishedTransitionThread = nil
 
 -- Forward declaration for variables used by functions defined before they're fully initialized
 local fetchAndDisplayNextRace
+local switchToLeaderCam
+local switchToPlayerCam
 local currentTrack = "Oval" -- Default track, will be updated on TrackChange
 
 -- Show "Next Race" state (clears positions and fetches next race info)
@@ -106,7 +111,7 @@ local function showNextRaceState()
 		fetchAndDisplayNextRace()
 	else
 		-- Fallback if function not yet defined
-		if raceLabel then raceLabel.Text = "Next Race" end
+		if raceLabel then raceLabel.Text = currentTrack .. " - Next Race" end
 		if lapsLabel then lapsLabel.Text = "" end
 	end
 end
@@ -134,11 +139,11 @@ local function updateStatsDisplay(data)
 	-- Update Race label
 	if raceLabel then
 		if status == "waiting" then
-			raceLabel.Text = "Next Race"
+			raceLabel.Text = currentTrack .. " - Next Race"
 		else
-			-- Show level and number in format: "Common - #3432"
+			-- Show track, level and number in format: "Oval - Common - #3432"
 			local numStr = raceNumber and ("#" .. tostring(raceNumber)) or ""
-			raceLabel.Text = raceLevel .. (numStr ~= "" and " - " .. numStr or "")
+			raceLabel.Text = currentTrack .. " - " .. raceLevel .. (numStr ~= "" and " - " .. numStr or "")
 		end
 	end
 
@@ -200,7 +205,7 @@ fetchAndDisplayNextRace = function()
 		})
 	else
 		-- No race info available - still show "Next Race" waiting state
-		if raceLabel then raceLabel.Text = "Next Race" end
+		if raceLabel then raceLabel.Text = currentTrack .. " - Next Race" end
 		if lapsLabel then lapsLabel.Text = "" end
 		if position1Label then position1Label.Text = "" end
 		if position2Label then position2Label.Text = "" end
@@ -212,7 +217,7 @@ end
 -- Track folder mapping for LeaderCam placement (LeaderCam is in each track's camera folder)
 local TRACKS = {
 	["Oval"] = "OvalCameras",
-	["Dirt"] = "DirtCameras", 
+	["Dirt"] = "DirtCameras",
 	["Road"] = "RoadCameras",
 	["Drag"] = "DragCameras"
 }
@@ -220,10 +225,23 @@ local TRACKS = {
 -- Camera folder mapping by track name (for regular track cameras)
 local CAMERA_FOLDERS = {
 	["Oval"] = "OvalCameras",
-	["Dirt"] = "DirtCameras", 
+	["Dirt"] = "DirtCameras",
 	["Road"] = "RoadCameras",
 	["Drag"] = "DragCameras"
 }
+
+-- Ordered track list for cycling (Back/Forward buttons)
+local TRACK_ORDER = {"Drag", "Dirt", "Road", "Oval"}
+
+-- Get index of current track in the ordered list
+local function getTrackIndex(trackName)
+	for i, name in ipairs(TRACK_ORDER) do
+		if name == trackName then
+			return i
+		end
+	end
+	return 1
+end
 
 -- Current track and camera state
 -- currentTrack is already declared at the top of the file
@@ -233,6 +251,10 @@ local views = { {kind = "player"} } -- Always start with player view
 -- LeaderCam tracking
 local leaderCamTrackingConnection = nil
 local isLeaderCamMode = false
+
+-- PlayerCam tracking
+local playerCamTrackingConnection = nil
+local isPlayerCamMode = false
 
 -- Function to load cameras for a specific track
 local function loadCamerasForTrack(trackName: string)
@@ -268,15 +290,54 @@ local function loadCamerasForTrack(trackName: string)
 	return true
 end
 
--- Function to rebuild the views array
+-- Function to rebuild the views array (track cameras + LeaderCam, NO player view)
 local function rebuildViews()
-	views = { {kind = "player"} } -- Always start with player view
+	views = {} -- No player view in cycle
+
+	-- Add track cameras (excluding LeaderCam and PlayerCam parts)
 	for _, part in ipairs(trackCams) do
-		table.insert(views, {kind = "track", part = part})
+		local partName = part.Name:lower()
+		if not partName:find("leadercam") and not partName:find("playercam") then
+			table.insert(views, {kind = "track", part = part})
+		end
 	end
-	print("[UICam] Rebuilt views - Total cameras: " .. #views .. " (1 player + " .. (#views - 1) .. " track cameras)")
-	if #views == 1 then
-		warn("[UICam] No camera parts found for track " .. currentTrack .. " (will only cycle player view).")
+
+	-- Add LeaderCam at the end of the cycle
+	local cameraFolderName = CAMERA_FOLDERS[currentTrack]
+	if cameraFolderName then
+		local cameraFolder = workspace:FindFirstChild(cameraFolderName)
+		if cameraFolder then
+			local leaderCam = cameraFolder:FindFirstChild("LeaderCam")
+			if leaderCam then
+				table.insert(views, {kind = "leader", part = leaderCam})
+			end
+		end
+	end
+
+	print("[UICam] Rebuilt views - Total cameras: " .. #views .. " (" .. (#views - 1) .. " track + LeaderCam)")
+	if #views == 0 then
+		warn("[UICam] No camera parts found for track " .. currentTrack)
+	end
+end
+
+-- Function to find PlayerCam for this player
+local function findPlayerCam()
+	local cameraFolderName = CAMERA_FOLDERS[currentTrack]
+	if not cameraFolderName then return nil end
+
+	local cameraFolder = workspace:FindFirstChild(cameraFolderName)
+	if not cameraFolder then return nil end
+
+	local playerCamName = "PlayerCam_" .. tostring(player.UserId)
+	local playerCam = cameraFolder:FindFirstChild(playerCamName)
+	return playerCam
+end
+
+-- Function to update Player button visibility
+local function updatePlayerButtonVisibility()
+	if btnPlayer then
+		local playerCam = findPlayerCam()
+		btnPlayer.Visible = (playerCam ~= nil)
 	end
 end
 
@@ -355,6 +416,23 @@ local function stopLeaderCamTracking()
 	end
 end
 
+-- Function to stop PlayerCam tracking
+local function stopPlayerCamTracking()
+	if playerCamTrackingConnection then
+		playerCamTrackingConnection:Disconnect()
+		playerCamTrackingConnection = nil
+		print("[UICam] Stopped PlayerCam tracking")
+	end
+end
+
+-- Function to stop all special cam tracking
+local function stopAllSpecialCamTracking()
+	stopLeaderCamTracking()
+	stopPlayerCamTracking()
+	isLeaderCamMode = false
+	isPlayerCamMode = false
+end
+
 -- Index helpers
 local currentIndex = 1 -- start on player view by default
 local function clampIndex(i: number)
@@ -368,16 +446,24 @@ local function gotoIndex(i: number)
 		return
 	end
 
-	-- Stop LeaderCam tracking when switching to any other view
-	stopLeaderCamTracking()
-	isLeaderCamMode = false
+	-- Stop all special tracking when switching views
+	stopAllSpecialCamTracking()
 
 	currentIndex = clampIndex(i)
 	local v = views[currentIndex]
 	print("[UICam] gotoIndex(" .. i .. ") -> currentIndex: " .. currentIndex .. ", kind: " .. v.kind .. " (Total views: " .. #views .. ")")
-	if v.kind == "player" then
-		setPlayerView()
+
+	if v.kind == "leader" then
+		-- For leader view, start continuous tracking
+		cam.CameraType = Enum.CameraType.Scriptable
+		isLeaderCamMode = true
+		leaderCamTrackingConnection = game:GetService("RunService").Heartbeat:Connect(function()
+			if v.part and v.part.Parent then
+				cam.CFrame = v.part.CFrame
+			end
+		end)
 	else
+		-- For track cameras, just move to the camera position
 		moveToCamera(v.part, 0.4)
 	end
 end
@@ -397,30 +483,133 @@ local function prevCamWithSound()
 	prevCam()
 end
 
--- Function to return camera to player view
+-- Function to return camera to player view (character follow)
 local function returnToPlayer()
 	print("[UICam] Returning to player view")
 	currentIndex = 1
-	isLeaderCamMode = false
-	stopLeaderCamTracking()
+	stopAllSpecialCamTracking()
 	-- Add error handling around setPlayerView call
 	pcall(function()
 		setPlayerView()
 	end)
 end
 
--- Wrapper for button click that plays sound
+-- Function to switch to PlayerCam view with continuous tracking
+switchToPlayerCam = function()
+	print("[UICam] Switching to PlayerCam view")
+
+	-- Stop any existing tracking
+	stopAllSpecialCamTracking()
+
+	-- Find PlayerCam for this player
+	local playerCam = findPlayerCam()
+
+	if not playerCam then
+		print("[UICam] Warning: PlayerCam not found for this player")
+		return false
+	end
+
+	-- Take over the camera for PlayerCam shot
+	cam.CameraType = Enum.CameraType.Scriptable
+	isPlayerCamMode = true
+
+	-- Start continuous tracking of the PlayerCam
+	playerCamTrackingConnection = game:GetService("RunService").Heartbeat:Connect(function()
+		if not playerCam or not playerCam.Parent then
+			print("[UICam] PlayerCam destroyed during tracking - stopping")
+			stopPlayerCamTracking()
+			isPlayerCamMode = false
+			return
+		end
+
+		-- Update camera position to follow PlayerCam
+		cam.CFrame = playerCam.CFrame
+	end)
+
+	print("[UICam] Camera switched to PlayerCam with continuous tracking")
+	return true
+end
+
+-- Wrapper for Player button click that plays sound and switches to PlayerCam
+local function switchToPlayerCamWithSound()
+	RaceSoundUtils.PlayButtonPressed()
+	switchToPlayerCam()
+end
+
+-- Wrapper for button click that plays sound (used when closing GUI)
 local function returnToPlayerWithSound()
 	RaceSoundUtils.PlayButtonPressed()
 	returnToPlayer()
 end
 
+-- Function to switch to a different track
+local function switchToTrack(newTrackName)
+	print("[UICam] Switching to track: " .. newTrackName)
 
+	-- Remember current cam modes
+	local wasInLeaderCamMode = isLeaderCamMode
+	local wasInPlayerCamMode = isPlayerCamMode
+
+	-- Load cameras for the new track
+	if loadCamerasForTrack(newTrackName) then
+		rebuildViews()
+
+		-- Update Player button visibility for new track
+		updatePlayerButtonVisibility()
+
+		-- Maintain cam mode when switching tracks
+		if wasInPlayerCamMode then
+			-- Try to switch to PlayerCam on new track
+			if not switchToPlayerCam() then
+				-- No PlayerCam on this track, go to first camera
+				currentIndex = 1
+				if #views > 0 then
+					gotoIndex(1)
+				end
+			end
+		elseif wasInLeaderCamMode then
+			switchToLeaderCam()
+		else
+			-- Go to first camera (track cam)
+			currentIndex = 1
+			if #views > 0 then
+				gotoIndex(1)
+			end
+		end
+	end
+
+	-- Fetch and display next race info for the new track
+	task.spawn(fetchAndDisplayNextRace)
+end
+
+-- Cycle to next track (Forward button): Drag -> Dirt -> Road -> Oval -> Drag
+local function cycleTrackForward()
+	RaceSoundUtils.PlayButtonPressed()
+	local currentIdx = getTrackIndex(currentTrack)
+	local nextIdx = currentIdx + 1
+	if nextIdx > #TRACK_ORDER then
+		nextIdx = 1
+	end
+	local newTrack = TRACK_ORDER[nextIdx]
+	switchToTrack(newTrack)
+end
+
+-- Cycle to previous track (Back button): Oval -> Road -> Dirt -> Drag -> Oval
+local function cycleTrackBackward()
+	RaceSoundUtils.PlayButtonPressed()
+	local currentIdx = getTrackIndex(currentTrack)
+	local prevIdx = currentIdx - 1
+	if prevIdx < 1 then
+		prevIdx = #TRACK_ORDER
+	end
+	local newTrack = TRACK_ORDER[prevIdx]
+	switchToTrack(newTrack)
+end
 
 
 
 -- Function to switch to LeaderCam view with continuous tracking
-local function switchToLeaderCam()
+switchToLeaderCam = function()
 	print("[UICam] Switching to LeaderCam view")
 
 	-- Stop any existing tracking
@@ -483,8 +672,12 @@ end
 -- Hook up UI
 if btnNext then btnNext.MouseButton1Click:Connect(nextCamWithSound) end
 if btnPrev then btnPrev.MouseButton1Click:Connect(prevCamWithSound) end
-if btnPlayer then btnPlayer.MouseButton1Click:Connect(returnToPlayerWithSound) end
+if btnPlayer then btnPlayer.MouseButton1Click:Connect(switchToPlayerCamWithSound) end
 if btnLeader then btnLeader.MouseButton1Click:Connect(switchToLeaderCamWithSound) end
+
+-- Hook up track cycling buttons (Back/Forward)
+if backButton then backButton.MouseButton1Click:Connect(cycleTrackBackward) end
+if forwardButton then forwardButton.MouseButton1Click:Connect(cycleTrackForward) end
 
 -- Optional: direct-select buttons (supports player slot too if you set CamIndex=1)
 if camButtonsFolder then
@@ -560,9 +753,13 @@ TrackChangeEvent.OnClientEvent:Connect(function(entering: boolean, newTrackName:
 		-- Load cameras for the new track
 		if loadCamerasForTrack(newTrackName) then
 			rebuildViews()
-			-- Reset to player view when entering a new track
+			-- Update Player button visibility
+			updatePlayerButtonVisibility()
+			-- Start at first track camera
 			currentIndex = 1
-			gotoIndex(1)
+			if #views > 0 then
+				gotoIndex(1)
+			end
 		end
 		-- Fetch and display next race info for this track
 		task.spawn(fetchAndDisplayNextRace)
@@ -595,8 +792,8 @@ end)
 
 -- Cleanup function to reset camera when script is removed
 local function cleanupCamera()
-	-- Stop LeaderCam tracking if active
-	stopLeaderCamTracking()
+	-- Stop all special cam tracking
+	stopAllSpecialCamTracking()
 
 	cam.CameraType = Enum.CameraType.Custom
 	cam.CameraSubject = nil -- Clear any existing subject first
@@ -626,6 +823,33 @@ player.AncestryChanged:Connect(function()
 	end
 end)
 
+-- Get current camera display name for mobile UI
+local function getCurrentCameraName()
+	if #views == 0 then
+		return "Camera"
+	end
+
+	local v = views[currentIndex]
+	if not v then
+		return "Camera"
+	end
+
+	if v.kind == "leader" then
+		return "Leader"
+	elseif v.kind == "player" then
+		return "Player"
+	elseif v.kind == "track" and v.part then
+		-- Extract camera number from part name (e.g., "Camera1" -> "Camera 1")
+		local num = v.part.Name:match("%d+")
+		if num then
+			return "Camera " .. num
+		end
+		return v.part.Name
+	end
+
+	return "Camera " .. tostring(currentIndex)
+end
+
 -- Expose functions globally for other scripts to use
 _G.CameraController = _G.CameraController or {}
 _G.CameraController.returnToPlayer = returnToPlayer
@@ -633,10 +857,19 @@ _G.CameraController.nextCam = nextCam
 _G.CameraController.prevCam = prevCam
 _G.CameraController.gotoIndex = gotoIndex
 _G.CameraController.switchToLeaderCam = switchToLeaderCam
+_G.CameraController.switchToPlayerCam = switchToPlayerCam
+_G.CameraController.getCurrentCameraName = getCurrentCameraName
+_G.CameraController.getCurrentIndex = function() return currentIndex end
+_G.CameraController.getViewsCount = function() return #views end
 
 -- Listen for race stats updates from the server
 if RaceStatsEvent then
 	RaceStatsEvent.OnClientEvent:Connect(function(trackName, data)
+		-- Update Player button visibility (PlayerCam may have been created)
+		if trackName == currentTrack then
+			updatePlayerButtonVisibility()
+		end
+
 		-- Only update if this is for the current track we're viewing
 		if trackName == currentTrack then
 			updateStatsDisplay(data)

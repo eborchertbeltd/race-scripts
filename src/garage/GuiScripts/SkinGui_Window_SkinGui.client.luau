@@ -1,6 +1,14 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 local OpenSkinEvent = ReplicatedStorage:WaitForChild("BindableEvents"):WaitForChild("OpenSkin")
+
+-- Mobile detection
+local function isMobileDevice()
+	local touchEnabled = UserInputService.TouchEnabled
+	local keyboardEnabled = UserInputService.KeyboardEnabled
+	return touchEnabled and not keyboardEnabled
+end
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local GetPlayerCache = ReplicatedStorage:WaitForChild("Player"):WaitForChild("GetPlayerCache")
@@ -188,13 +196,18 @@ local function populateColorOptions()
 		end
 	end
 
-	-- Create color buttons
+	-- Create color buttons (smaller on mobile to fit 5-6 wide)
+	local isMobile = isMobileDevice()
+	local buttonSize = isMobile and 10 or 40
+	local cornerRadius = isMobile and 2 or 6
+	local borderSize = isMobile and 1 or 2
+
 	for i, colorData in ipairs(colorPalette) do
 		local button = Instance.new("TextButton")
 		button.Name = colorData.name
-		button.Size = UDim2.new(0, 40, 0, 40)
+		button.Size = UDim2.new(0, buttonSize, 0, buttonSize)
 		button.BackgroundColor3 = colorData.color
-		button.BorderSizePixel = 2
+		button.BorderSizePixel = borderSize
 		button.BorderColor3 = Color3.fromRGB(60, 60, 60)
 		button.Text = ""
 		button.AutoButtonColor = true
@@ -202,7 +215,7 @@ local function populateColorOptions()
 
 		-- Add corner rounding
 		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 6)
+		corner.CornerRadius = UDim.new(0, cornerRadius)
 		corner.Parent = button
 
 		-- Add hover/selected stroke
@@ -219,12 +232,25 @@ local function populateColorOptions()
 
 		-- Hover effect
 		button.MouseEnter:Connect(function()
-			stroke.Thickness = 2
+			stroke.Thickness = isMobile and 1 or 2
 		end)
 
 		button.MouseLeave:Connect(function()
 			stroke.Thickness = 0
 		end)
+	end
+
+	-- Update canvas size for scrolling
+	RunService.RenderStepped:Wait()
+	local grid = colorOptions:FindFirstChildOfClass("UIGridLayout")
+	local padding = colorOptions:FindFirstChildOfClass("UIPadding")
+	if grid then
+		local totalHeight = grid.AbsoluteContentSize.Y
+		if padding then
+			totalHeight += padding.PaddingTop.Offset
+			totalHeight += padding.PaddingBottom.Offset
+		end
+		colorOptions.CanvasSize = UDim2.new(0, 0, 0, totalHeight)
 	end
 end
 

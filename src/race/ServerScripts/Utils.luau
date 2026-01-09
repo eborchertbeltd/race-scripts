@@ -231,6 +231,9 @@ Utils.attachNameBillboard = function(carModel: Model, displayName: string)
 	local part = carModel.PrimaryPart
 	if not part then return end
 
+	-- Store the base name as an attribute for later position updates
+	carModel:SetAttribute("BaseName", displayName)
+
 	-- Attachment to anchor the billboard above the car
 	local att = part:FindFirstChild("NameBillboardAtt") or Instance.new("Attachment")
 	att.Name = "NameBillboardAtt"
@@ -246,7 +249,7 @@ Utils.attachNameBillboard = function(carModel: Model, displayName: string)
 	bb.Adornee = att
 	bb.Parent = carModel
 
-	-- Set both text labels
+	-- Set both text labels (initial text without position)
 	local rootFrame = bb:FindFirstChild("Frame")
 	if rootFrame then
 		local textFrame = rootFrame:FindFirstChild("Text")
@@ -255,6 +258,33 @@ Utils.attachNameBillboard = function(carModel: Model, displayName: string)
 			local stroke = textFrame:FindFirstChild("TextLabel - Stroke")
 			if label and label:IsA("TextLabel") then label.Text = displayName end
 			if stroke and stroke:IsA("TextLabel") then stroke.Text = displayName end
+		end
+	end
+end
+
+-- Update the name billboard with the current race position
+-- Shows "#1 - PlayerName" format
+Utils.updateNameBillboardPosition = function(carModel: Model, place: number)
+	if not carModel then return end
+
+	local baseName = carModel:GetAttribute("BaseName")
+	if not baseName then return end
+
+	local bb = carModel:FindFirstChild("DriverBillboard")
+	if not bb then return end
+
+	-- Format: "#1 - PlayerName"
+	local displayText = "#" .. tostring(place) .. " - " .. baseName
+
+	-- Update both text labels
+	local rootFrame = bb:FindFirstChild("Frame")
+	if rootFrame then
+		local textFrame = rootFrame:FindFirstChild("Text")
+		if textFrame and textFrame:IsA("Frame") then
+			local label = textFrame:FindFirstChild("TextLabel")
+			local stroke = textFrame:FindFirstChild("TextLabel - Stroke")
+			if label and label:IsA("TextLabel") then label.Text = displayText end
+			if stroke and stroke:IsA("TextLabel") then stroke.Text = displayText end
 		end
 	end
 end

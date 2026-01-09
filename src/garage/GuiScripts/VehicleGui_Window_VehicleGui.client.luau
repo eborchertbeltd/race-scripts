@@ -1,5 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 local OpenVehicleEvent = ReplicatedStorage:WaitForChild("BindableEvents"):WaitForChild("OpenVehicle")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -11,6 +12,13 @@ local mainGui = playerGui:WaitForChild("VehicleGui"):WaitForChild("Window")
 local Utils = require(game.ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utils"))
 local GarageSoundUtils = require(game.ReplicatedStorage:WaitForChild("Modules"):WaitForChild("GarageSoundUtils"))
 local RunService = game:GetService("RunService")
+
+-- Mobile detection
+local function isMobileDevice()
+	local touchEnabled = UserInputService.TouchEnabled
+	local keyboardEnabled = UserInputService.KeyboardEnabled
+	return touchEnabled and not keyboardEnabled
+end
 -- GUI references
 local selectionFrame = mainGui:WaitForChild("Content"):WaitForChild("Body"):WaitForChild("ItemList")
 local mainFrame = mainGui:WaitForChild("Content"):WaitForChild("Body"):WaitForChild("Main")
@@ -109,9 +117,41 @@ local function setPart(item, part)
 		vehicle[currentTab] = part.referenced_object.id
 		updateCache(oldPart, part.referenced_object.id)
 		local setParent = Utils.findDescendantByName(mainFrame, currentTab):WaitForChild("Content")
-		local picked = item:clone()
-		picked.Visible = true
-		picked.Parent = setParent
+
+		if isMobileDevice() then
+			-- On mobile, show just the Level indicator centered
+			local levelFrame = Utils.findDescendantByName(item, "Level")
+			if levelFrame then
+				local levelClone = levelFrame:Clone()
+				-- Remove UIGridLayout and UIPadding from the cloned Level frame
+				local clonedGrid = levelClone:FindFirstChild("UIGridLayout")
+				local clonedPadding = levelClone:FindFirstChild("UIPadding")
+				if clonedGrid then clonedGrid:Destroy() end
+				if clonedPadding then clonedPadding:Destroy() end
+
+				-- Size and center the Level frame within Content
+				levelClone.Size = UDim2.new(0.8, 0, 0.8, 0)
+				levelClone.Position = UDim2.new(0.5, 0, 0.5, 0)
+				levelClone.AnchorPoint = Vector2.new(0.5, 0.5)
+
+				-- Size the ImageLabel to fill
+				local imageLabel = levelClone:FindFirstChild("ImageLabel")
+				if imageLabel then
+					imageLabel.Size = UDim2.new(1, 0, 1, 0)
+					imageLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
+					imageLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+					imageLabel.ScaleType = Enum.ScaleType.Fit
+				end
+				levelClone.Visible = true
+				levelClone.Parent = setParent
+			end
+		else
+			-- On desktop, show full template
+			local picked = item:Clone()
+			picked.Visible = true
+			picked.Parent = setParent
+		end
+
 		clearInventory()
 		setInventory()
 		swapping = false
@@ -120,14 +160,49 @@ end
 
 
 local function ownedCarSetup()
+	local isMobile = isMobileDevice()
+
 	for key, value in vehicle do
 		if key ~= "Id" and key ~= "Name" and key ~= "slotted_number" then
-			local item = partTemplate:Clone()
 			local entry = getItemById(value)
-			loadItem(item, entry, false, true, true)
 			local setParent = Utils.findDescendantByName(mainFrame, key):WaitForChild("Content")
-			item.Visible = true
-			item.Parent = setParent
+
+			if isMobile then
+				-- On mobile, show just the Level indicator centered and sized to fill
+				local levelFrame = Utils.findDescendantByName(partTemplate, "Level")
+				if levelFrame then
+					local levelClone = levelFrame:Clone()
+					-- Remove UIGridLayout and UIPadding from the cloned Level frame
+					local clonedGrid = levelClone:FindFirstChild("UIGridLayout")
+					local clonedPadding = levelClone:FindFirstChild("UIPadding")
+					if clonedGrid then clonedGrid:Destroy() end
+					if clonedPadding then clonedPadding:Destroy() end
+
+					-- Size and center the Level frame within Content
+					levelClone.Size = UDim2.new(0.8, 0, 0.8, 0)
+					levelClone.Position = UDim2.new(0.5, 0, 0.5, 0)
+					levelClone.AnchorPoint = Vector2.new(0.5, 0.5)
+
+					-- Apply the level icon and size the ImageLabel to fill
+					local imageLabel = levelClone:FindFirstChild("ImageLabel")
+					if imageLabel then
+						local level = entry and entry.level or "Common"
+						imageLabel.Image = Utils.colorIconScheme[level] and Utils.colorIconScheme[level].icon or ""
+						imageLabel.Size = UDim2.new(1, 0, 1, 0)
+						imageLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
+						imageLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+						imageLabel.ScaleType = Enum.ScaleType.Fit
+					end
+					levelClone.Visible = true
+					levelClone.Parent = setParent
+				end
+			else
+				-- On desktop, show the full partTemplate
+				local item = partTemplate:Clone()
+				loadItem(item, entry, false, true, true)
+				item.Visible = true
+				item.Parent = setParent
+			end
 		end
 	end
 	textInput.Text = vehicle.Name

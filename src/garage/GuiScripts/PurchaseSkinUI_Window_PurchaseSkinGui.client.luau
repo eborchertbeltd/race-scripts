@@ -11,6 +11,7 @@ local Utils = require(game.ReplicatedStorage:WaitForChild("Modules"):WaitForChil
 local GarageSoundUtils = require(game.ReplicatedStorage:WaitForChild("Modules"):WaitForChild("GarageSoundUtils"))
 
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 -- RemoteEvent for purchase completion notifications (optional, for UI refresh)
 local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
@@ -36,6 +37,8 @@ local CASH_PRICE = 10000
 local playerCache = nil
 local allSkins = nil
 
+-- Forward declaration for refresh function (used by purchase handlers)
+local refreshAfterPurchase
 
 -- Helper: Get owned skin names from player cache
 local function getOwnedSkinNames()
@@ -202,15 +205,52 @@ local function loadCashPurchaseItem(item, skin)
 			GarageSoundUtils.PlayRegister()
 			print("[PurchaseSkinGui] Cash purchase clicked - Skin:", skin.name, "ID:", skin.id)
 
+			-- Show spinner on the button
+			local spinnerFrame = Instance.new("Frame")
+			spinnerFrame.Name = "SpinnerFrame"
+			spinnerFrame.Size = UDim2.new(1, 0, 1, 0)
+			spinnerFrame.Position = UDim2.new(0, 0, 0, 0)
+			spinnerFrame.BackgroundTransparency = 1
+			spinnerFrame.BorderSizePixel = 0
+			spinnerFrame.ZIndex = purchaseButton.ZIndex + 1
+
+			local spinnerImage = Instance.new("ImageLabel")
+			spinnerImage.Name = "SpinnerImage"
+			spinnerImage.Size = UDim2.new(0, 24, 0, 24)
+			spinnerImage.Position = UDim2.new(0.5, -12, 0.5, -12)
+			spinnerImage.BackgroundTransparency = 1
+			spinnerImage.Image = "rbxassetid://101716378951252"
+			spinnerImage.ZIndex = spinnerFrame.ZIndex + 1
+			spinnerImage.Parent = spinnerFrame
+
+			local rotationTween = TweenService:Create(
+				spinnerImage,
+				TweenInfo.new(1, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1),
+				{Rotation = 360}
+			)
+
+			-- Hide button text and show spinner
+			if priceLabel then priceLabel.Visible = false end
+			if priceLabelStroke then priceLabelStroke.Visible = false end
+			spinnerFrame.Parent = purchaseButton
+			purchaseButton.Active = false
+			rotationTween:Play()
+
 			-- Call server to purchase with cash
 			local result = purchaseSkinWithCash:InvokeServer(skin.id)
 
 			if result and result.success then
 				print("[PurchaseSkinGui] Cash purchase successful!")
-				-- Refresh the purchase menu
+				-- Refresh the purchase menu (spinner will be cleaned up with clearItems)
 				refreshAfterPurchase("CashPurchase", skin.name)
 			else
 				warn("[PurchaseSkinGui] Cash purchase failed:", result and result.error or "Unknown error")
+				-- Restore button on failure
+				rotationTween:Cancel()
+				spinnerFrame:Destroy()
+				if priceLabel then priceLabel.Visible = true end
+				if priceLabelStroke then priceLabelStroke.Visible = true end
+				purchaseButton.Active = true
 			end
 		end)
 	end
@@ -500,7 +540,7 @@ if mainGui.Visible then
 end
 
 -- Helper to refresh after purchase
-local function refreshAfterPurchase(source, identifier)
+function refreshAfterPurchase(source, identifier)
 	print("[PurchaseSkinGui] Refreshing after purchase from:", source, identifier or "")
 
 	-- Clear local cache to force fresh data fetch

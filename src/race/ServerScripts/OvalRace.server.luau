@@ -14,6 +14,7 @@ local Utils = require(game.ServerScriptService:WaitForChild("GameScripts"):WaitF
 local RaceSoundUtils = require(game.ReplicatedStorage:WaitForChild("Modules"):WaitForChild("RaceSoundUtils"))
 local GameApiService = require(ServerScriptService:WaitForChild("GameScripts"):WaitForChild("GameApiService"))
 local ServerData = require(ServerScriptService:WaitForChild("GameScripts"):WaitForChild("ServerData"))
+local Billboard = require(ServerScriptService:WaitForChild("GameScripts"):WaitForChild("Billboard"))
 
 -- Current race level and number (used for NPC skin selection and stats display)
 local raceLevel = "Common"
@@ -36,6 +37,11 @@ local leaderCamTask = nil -- Track the LeaderCam task so we can stop it
 local activeCars = {} -- Track active cars for leader determination
 local leaderCamInitialPosition = nil -- Store the first position of LeaderCam
 local raceFinished = false -- Track if any car has finished the race
+
+-- PlayerCam tracking (one per player vehicle in the race)
+local playerCams = {} -- {[visibleUserId] = {cam = Part, carId = string, userId = string}}
+local playerCamConnection = nil
+local playerCamTask = nil
 
 
 local function findLeaderCam()
@@ -68,6 +74,143 @@ local function cleanupLeaderCam()
 		-- Return to the original CFrame position and orientation
 		leaderCam.CFrame = leaderCamInitialPosition
 	end
+end
+
+-- PlayerCam functions (one camera per player vehicle)
+local function createPlayerCams(finishOrderData)
+	-- Find the camera folder
+	local cameraFolder = workspace:FindFirstChild("OvalCameras")
+	if not cameraFolder then
+		warn("[OvalRace] OvalCameras folder not found, cannot create PlayerCams")
+		return
+	end
+
+	-- Clean up any existing PlayerCams first
+	for userId, camData in pairs(playerCams) do
+		if camData.cam and camData.cam.Parent then
+			camData.cam:Destroy()
+		end
+	end
+	playerCams = {}
+
+	-- Create a PlayerCam for each player vehicle
+	for _, entry in ipairs(finishOrderData) do
+		if type(entry) == "table" and entry.vehicle_id and entry.competitor_type == "vehicle" then
+			-- Get the player's Roblox user ID from the vehicle
+			local success, vehicle = pcall(function()
+				return GameApiService.GetVehicleById(entry.vehicle_id)
+			end)
+
+			if success and vehicle and vehicle.player_roblox_id then
+				local userId = tostring(vehicle.player_roblox_id)
+
+				-- Create a camera part for this player
+				local playerCam = Instance.new("Part")
+				playerCam.Name = "PlayerCam_" .. userId
+				playerCam.Size = Vector3.new(1, 1, 1)
+				playerCam.Transparency = 1
+				playerCam.Anchored = true
+				playerCam.CanCollide = false
+				playerCam.CanQuery = false
+				playerCam.CanTouch = false
+
+				-- Position at LeaderCam's initial position until race starts
+				if leaderCamInitialPosition then
+					playerCam.CFrame = leaderCamInitialPosition
+				end
+
+				playerCam.Parent = cameraFolder
+
+				-- Track this PlayerCam
+				playerCams[userId] = {
+					cam = playerCam,
+					carId = nil, -- Will be set when we know which car slot this player is in
+					userId = userId,
+					vehicleId = entry.vehicle_id
+				}
+
+				print("[OvalRace] Created PlayerCam for user:", userId)
+			end
+		end
+	end
+end
+
+local function updatePlayerCams()
+	if raceFinished then
+		return
+	end
+
+	-- Update each PlayerCam to follow its player's vehicle
+	for userId, camData in pairs(playerCams) do
+		if not camData.cam or not camData.cam.Parent then
+			continue
+		end
+
+		-- Find the car that belongs to this player
+		local playerCar = nil
+		local playerRoot = nil
+
+		for carId, carData in pairs(activeCars) do
+			if carData.car and carData.car.Parent and carData.root and carData.root.Parent then
+				-- Check if this car matches the player's vehicle
+				local carIdAttr = carData.car:GetAttribute("CarId")
+				-- Match by checking finishOrder for vehicle_id
+				for i, entry in ipairs(finishOrder) do
+					if type(entry) == "table" and entry.vehicle_id == camData.vehicleId then
+						-- This entry matches our player's vehicle
+						-- Check if carId corresponds to this entry (car1, car2, etc.)
+						local expectedCarId = "car" .. tostring(i)
+						if carIdAttr == expectedCarId or carId == expectedCarId then
+							playerCar = carData.car
+							playerRoot = carData.root
+							break
+						end
+					end
+				end
+				if playerCar then break end
+			end
+		end
+
+		if playerRoot then
+			local carPos = playerRoot.Position
+			local carForward = playerRoot.CFrame.LookVector
+
+			-- Position PlayerCam 15 studs in front of the car, 4 studs up (same as LeaderCam)
+			local camOffset = carForward * 15 + Vector3.new(0, 4, 0)
+			local camPosition = carPos + camOffset
+
+			-- Check if PlayerCam drops significantly below initial position
+			if leaderCamInitialPosition and camPosition.Y < (leaderCamInitialPosition.Y - 50) then
+				camData.cam.CFrame = leaderCamInitialPosition
+			else
+				-- Orient PlayerCam to face the car
+				local lookDirection = (carPos - camPosition).Unit
+				camData.cam.CFrame = CFrame.lookAt(camPosition, camPosition + lookDirection)
+			end
+		end
+	end
+end
+
+local function cleanupPlayerCams()
+	-- Stop the tracking task
+	if playerCamTask then
+		task.cancel(playerCamTask)
+		playerCamTask = nil
+	end
+
+	-- Stop the tracking connection
+	if playerCamConnection then
+		playerCamConnection:Disconnect()
+		playerCamConnection = nil
+	end
+
+	-- Destroy all PlayerCam parts
+	for userId, camData in pairs(playerCams) do
+		if camData.cam and camData.cam.Parent then
+			camData.cam:Destroy()
+		end
+	end
+	playerCams = {}
 end
 
 local function updateLeaderCam()
@@ -134,7 +277,6 @@ end
 local function fadeOutAndDestroy(model, duration)
 	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
-			part.CanCollide = false
 			local tween = TweenService:Create(part, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Transparency = 1})
 			tween:Play()
 		end
@@ -511,9 +653,9 @@ local function runCar(carId: string, finishRank: number, topSpeedTrack: number, 
 		local rayHit = workspace:Raycast(rootPos + Vector3.new(0, 5, 0), Vector3.new(0, -80, 0), rcParams)
 		local up = (rayHit and rayHit.Normal) or Vector3.new(0,1,0)
 
-		-- Smooth ground up to reduce jitter
+		-- Smooth ground up to reduce jitter (0.6 for responsive banking on oval tracks)
 		local lastUp = (car:GetAttribute("_lastUpX") and Vector3.new(car:GetAttribute("_lastUpX"), car:GetAttribute("_lastUpY"), car:GetAttribute("_lastUpZ"))) or up
-		up = lastUp:Lerp(up, 0.25).Unit
+		up = lastUp:Lerp(up, 0.6).Unit
 		car:SetAttribute("_lastUpX", up.X)
 		car:SetAttribute("_lastUpY", up.Y)
 		car:SetAttribute("_lastUpZ", up.Z)
@@ -728,7 +870,10 @@ local function runCar(carId: string, finishRank: number, topSpeedTrack: number, 
 		director:updateProgress(carId, (laps and (laps - (remainingLaps or laps) + 1)) or 1, wpIndex, t)
 		-- update live place attribute for debugging/UI
 		local place = director:getPlace(carId)
-		if place then car:SetAttribute("Place", place) end
+		if place then
+			car:SetAttribute("Place", place)
+			Utils.updateNameBillboardPosition(car, place)
+		end
 
 		-- advance when sufficiently progressed along segment or near waypoint center
 		if t >= 0.98 or (wpPos - rootPos).Magnitude <= reachRadius then
@@ -784,6 +929,7 @@ local function runCar(carId: string, finishRank: number, topSpeedTrack: number, 
 
 						-- Update billboard with final results FIRST (before any blocking calls)
 						Utils.updateRaceBillboard("Oval", "finished", orderLabels)
+						Billboard.ClearCurrentPositions("Oval")
 
 						-- Fire stats update to clients with final results IMMEDIATELY
 						Utils.fireRaceStatsUpdate("Oval", {
@@ -818,6 +964,7 @@ local function runCar(carId: string, finishRank: number, topSpeedTrack: number, 
 							end
 
 							cleanupLeaderCam()
+							cleanupPlayerCams()
 							-- Use task.spawn so TriggerNextRace doesn't block
 							task.spawn(function()
 								pcall(function()
@@ -922,6 +1069,9 @@ startRace.OnInvoke = function(payload)
 	-- Find the existing LeaderCam
 	findLeaderCam()
 
+	-- Create PlayerCams for player vehicles in this race
+	createPlayerCams(finishOrder)
+
 	task.spawn(function()
 		-- Space cars across the track using right vector from WP1->WP2
 		local wp1 = waypoints[1]
@@ -938,8 +1088,8 @@ startRace.OnInvoke = function(payload)
 		runCar("car3", 3, topSpeedTrack, 170, 240, laps, right0 * (0.5 * spacing), startDelay)
 		runCar("car4", 4, topSpeedTrack, 155, 230, laps, right0 * (1.5 * spacing), startDelay)
 
-		-- Start LeaderCam tracking after cars are created and registered (with a small delay)
-		-- Cancel any existing task first
+		-- Start LeaderCam and PlayerCam tracking after cars are created and registered (with a small delay)
+		-- Cancel any existing tasks first
 		if leaderCamTask then
 			task.cancel(leaderCamTask)
 			leaderCamTask = nil
@@ -948,10 +1098,23 @@ startRace.OnInvoke = function(payload)
 			leaderCamConnection:Disconnect()
 			leaderCamConnection = nil
 		end
+		if playerCamTask then
+			task.cancel(playerCamTask)
+			playerCamTask = nil
+		end
+		if playerCamConnection then
+			playerCamConnection:Disconnect()
+			playerCamConnection = nil
+		end
 
 		leaderCamTask = task.spawn(function()
 			task.wait(startDelay + 1.0) -- Wait for cars to be created, registered, and start moving
 			leaderCamConnection = RunService.Heartbeat:Connect(updateLeaderCam)
+		end)
+
+		playerCamTask = task.spawn(function()
+			task.wait(startDelay + 1.0) -- Wait for cars to be created, registered, and start moving
+			playerCamConnection = RunService.Heartbeat:Connect(updatePlayerCams)
 		end)
 
 		-- Start race progress updates after delay
@@ -1048,6 +1211,7 @@ startRace.OnInvoke = function(payload)
 
 					-- Update billboard with current positions
 					Utils.updateRaceBillboard("Oval", "in_progress", sortedPositions)
+					Billboard.UpdateCurrentPositions("Oval", sortedPositions)
 
 					-- Fire stats update to clients
 					Utils.fireRaceStatsUpdate("Oval", {

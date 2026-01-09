@@ -7,6 +7,7 @@ local Utils = require(game.ServerScriptService:WaitForChild("GameScripts"):WaitF
 local RaceSoundUtils = require(game.ReplicatedStorage:WaitForChild("Modules"):WaitForChild("RaceSoundUtils"))
 local GameApiService = require(game.ServerScriptService:WaitForChild("GameScripts"):WaitForChild("GameApiService"))
 local ServerData = require(game.ServerScriptService:WaitForChild("GameScripts"):WaitForChild("ServerData"))
+local Billboard = require(game.ServerScriptService:WaitForChild("GameScripts"):WaitForChild("Billboard"))
 local CARS_FOLDER = ReplicatedStorage:WaitForChild("Cars")
 local DRAG_WP = workspace:WaitForChild("DragWaypoints")
 local startRace = game.ServerScriptService:WaitForChild("StartDragRace")
@@ -74,7 +75,6 @@ end
 local function fadeOutAndDestroy(model: Model, duration: number)
 	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
-			part.CanCollide = false
 			local tween = TweenService:Create(part, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Transparency = 1})
 			tween:Play()
 		end
@@ -93,6 +93,11 @@ local leaderCamTask = nil -- Track the LeaderCam task so we can stop it
 local activeCars = {} -- Track active cars for leader determination
 local leaderCamInitialPosition = nil -- Store the first position of LeaderCam
 
+-- PlayerCam tracking (one per player vehicle in the race)
+local playerCams = {} -- {[visibleUserId] = {cam = Part, carId = string, userId = string}}
+local playerCamConnection = nil
+local playerCamTask = nil
+
 local function findLeaderCam()
 	-- Find the existing LeaderCam in the DragCameras folder
 	local dragCamerasFolder = workspace:FindFirstChild("DragCameras")
@@ -108,9 +113,10 @@ end
 local function updateLeaderCam()
 	if not leaderCam or not leaderCam.Parent then return end
 
-	-- Find the car that's furthest along the track
+	-- Find the car that's furthest along the track and calculate positions
 	local leadingCar = nil
 	local leadingProgress = -math.huge
+	local carProgressList = {}
 
 	for lanePrefix, carData in pairs(activeCars) do
 		if carData.car and carData.car.Parent and carData.root and carData.root.Parent then
@@ -118,11 +124,18 @@ local function updateLeaderCam()
 			-- For drag races, we'll use X-axis as the main direction (track runs along negative X)
 			-- Negate so that more negative X = higher progress
 			local progress = -carData.root.Position.X
+			table.insert(carProgressList, {car = carData.car, progress = progress})
 			if progress > leadingProgress then
 				leadingProgress = progress
 				leadingCar = carData
 			end
 		end
+	end
+
+	-- Sort by progress descending and update name billboards with positions
+	table.sort(carProgressList, function(a, b) return a.progress > b.progress end)
+	for place, entry in ipairs(carProgressList) do
+		Utils.updateNameBillboardPosition(entry.car, place)
 	end
 
 	if leadingCar and leadingCar.root then
@@ -167,6 +180,120 @@ local function cleanupLeaderCam()
 		-- Return to the original CFrame position and orientation
 		leaderCam.CFrame = leaderCamInitialPosition
 	end
+end
+
+-- PlayerCam functions (one camera per player vehicle)
+local function createPlayerCams(finishOrderData)
+	local cameraFolder = workspace:FindFirstChild("DragCameras")
+	if not cameraFolder then
+		warn("[DragRace] DragCameras folder not found, cannot create PlayerCams")
+		return
+	end
+
+	for userId, camData in pairs(playerCams) do
+		if camData.cam and camData.cam.Parent then
+			camData.cam:Destroy()
+		end
+	end
+	playerCams = {}
+
+	for _, entry in ipairs(finishOrderData) do
+		if type(entry) == "table" and entry.vehicle_id and entry.competitor_type == "vehicle" then
+			local success, vehicle = pcall(function()
+				return GameApiService.GetVehicleById(entry.vehicle_id)
+			end)
+
+			if success and vehicle and vehicle.player_roblox_id then
+				local oderId = tostring(vehicle.player_roblox_id)
+
+				local playerCam = Instance.new("Part")
+				playerCam.Name = "PlayerCam_" .. oderId
+				playerCam.Size = Vector3.new(1, 1, 1)
+				playerCam.Transparency = 1
+				playerCam.Anchored = true
+				playerCam.CanCollide = false
+				playerCam.CanQuery = false
+				playerCam.CanTouch = false
+
+				if leaderCamInitialPosition then
+					playerCam.CFrame = leaderCamInitialPosition
+				end
+
+				playerCam.Parent = cameraFolder
+
+				playerCams[oderId] = {
+					cam = playerCam,
+					carId = nil,
+					oderId = oderId,
+					vehicleId = entry.vehicle_id
+				}
+
+				print("[DragRace] Created PlayerCam for user:", oderId)
+			end
+		end
+	end
+end
+
+local function updatePlayerCams()
+	for oderId, camData in pairs(playerCams) do
+		if not camData.cam or not camData.cam.Parent then
+			continue
+		end
+
+		local playerRoot = nil
+
+		-- Drag race uses CarA and CarB lane prefixes
+		for lanePrefix, carData in pairs(activeCars) do
+			if carData.car and carData.car.Parent and carData.root and carData.root.Parent then
+				-- Check if this car matches the player's vehicle
+				for i, entry in ipairs(finishOrder) do
+					if type(entry) == "table" and entry.vehicle_id == camData.vehicleId then
+						local expectedLane = (i == 1) and "CarA" or "CarB"
+						if lanePrefix == expectedLane then
+							playerRoot = carData.root
+							break
+						end
+					end
+				end
+				if playerRoot then break end
+			end
+		end
+
+		if playerRoot then
+			local carPos = playerRoot.Position
+			local carForward = playerRoot.CFrame.LookVector
+			local carRight = playerRoot.CFrame.RightVector
+
+			-- Same offset as LeaderCam for drag
+			local camOffset = carForward * 15 + carRight * 3 + Vector3.new(0, 2, 0)
+			local camPosition = carPos + camOffset
+
+			if leaderCamInitialPosition and camPosition.Y < (leaderCamInitialPosition.Y - 50) then
+				camData.cam.CFrame = leaderCamInitialPosition
+			else
+				camData.cam.CFrame = CFrame.lookAt(camPosition, carPos)
+			end
+		end
+	end
+end
+
+local function cleanupPlayerCams()
+	if playerCamTask then
+		task.cancel(playerCamTask)
+		playerCamTask = nil
+	end
+
+	if playerCamConnection then
+		playerCamConnection:Disconnect()
+		playerCamConnection = nil
+	end
+
+	for oderId, camData in pairs(playerCams) do
+		if camData.cam and camData.cam.Parent then
+			camData.cam:Destroy()
+		end
+	end
+	playerCams = {}
 end
 
 -- Helper function to apply color to all Body and Wheel parts of a car model
@@ -726,6 +853,9 @@ startRace.OnInvoke = function(payload)
 	-- Find the existing LeaderCam
 	findLeaderCam()
 
+	-- Create PlayerCams for player vehicles in this race
+	createPlayerCams(finishOrder)
+
 	-- Calculate different speeds based on predicted performance
 	local car1Speed = topSpeedTrack
 	local car2Speed = topSpeedTrack
@@ -756,10 +886,15 @@ startRace.OnInvoke = function(payload)
 		runLane("CarA", car1Speed, barrier, finishOrder[1] or "CarA")
 	end)
 
-	-- Start LeaderCam tracking after cars are created (with a small delay)
+	-- Start LeaderCam and PlayerCam tracking after cars are created (with a small delay)
 	leaderCamTask = task.spawn(function()
 		task.wait(0.5) -- Wait for cars to be created
 		leaderCamConnection = RunService.Heartbeat:Connect(updateLeaderCam)
+	end)
+
+	playerCamTask = task.spawn(function()
+		task.wait(0.5) -- Wait for cars to be created
+		playerCamConnection = RunService.Heartbeat:Connect(updatePlayerCams)
 	end)
 
 	-- Start race progress updates after barrier sync
@@ -780,6 +915,7 @@ startRace.OnInvoke = function(payload)
 			positions = positions
 		})
 		Utils.updateRaceBillboard("Drag", "in_progress", positions)
+		Billboard.UpdateCurrentPositions("Drag", positions)
 	end)
 
 	task.spawn(function()
@@ -823,6 +959,7 @@ startRace.OnInvoke = function(payload)
 			table.insert(orderLabels, labelFor[rec.car] or rec.car)
 		end
 		Utils.updateRaceBillboard("Drag", "finished", orderLabels)
+		Billboard.ClearCurrentPositions("Drag")
 
 		-- Fire stats update to clients with final results IMMEDIATELY
 		Utils.fireRaceStatsUpdate("Drag", {
@@ -864,6 +1001,7 @@ startRace.OnInvoke = function(payload)
 			end
 
 			cleanupLeaderCam()
+			cleanupPlayerCams()
 			-- Use task.spawn so TriggerNextRace doesn't block
 			task.spawn(function()
 				pcall(function()

@@ -27,7 +27,6 @@ function ServerData.StorePlayerVehicles(playerUserId, vehicles)
 		lastUpdated = tick()
 	}
 
-	print("[ServerData] Stored", #vehicles, "vehicles for player", playerUserId)
 	return true
 end
 
@@ -44,7 +43,6 @@ function ServerData.GetPlayerVehicles(playerUserId)
 	end
 
 	-- Fetch from API if not in cache
-	print("[ServerData] Fetching vehicles from API for player", playerUserId)
 	local vehicles = ApiService.GetPlayerVehicles(playerUserId)
 	if vehicles then
 		-- Store in cache for future use
@@ -64,7 +62,6 @@ function ServerData.RemovePlayerVehicles(playerUserId)
 
 	if _cache.playerVehicles[playerUserId] then
 		_cache.playerVehicles[playerUserId] = nil
-		print("[ServerData] Removed vehicles from storage for player", playerUserId)
 		return true
 	end
 
@@ -73,7 +70,6 @@ end
 
 function ServerData.ClearAllPlayerVehicles()
 	_cache.playerVehicles = {}
-	print("[ServerData] Cleared all player vehicles from storage")
 end
 
 -- Get cached RaceQueue summary for a server, fetch from API if not present
@@ -87,30 +83,6 @@ function ServerData.GetRaceQueue(serverId)
 	end
 	local data = ApiService.GetRaceQueue(serverId)
 	if data then
-		-- Debug: Print raw API response
-		print("[ServerData] Raw API response for server", serverId, ":")
-		print("[ServerData] Data type:", type(data))
-		if type(data) == "table" then
-			print("[ServerData] Data keys:")
-			for key, value in pairs(data) do
-				if type(value) == "table" then
-					print(string.format("[ServerData]   %s: table with %d items", key, #value))
-					-- Print first few items to see structure
-					for i = 1, math.min(3, #value) do
-						local item = value[i]
-						if type(item) == "table" then
-							print(string.format("[ServerData]     Item %d: number=%s, track=%s, ready=%s, race_finished=%s", 
-								i, tostring(item.number), tostring(item.track), tostring(item.ready), tostring(item.race_finished)))
-						end
-					end
-				else
-					print(string.format("[ServerData]   %s: %s", key, tostring(value)))
-				end
-			end
-		else
-			print("[ServerData] Data is not a table:", tostring(data))
-		end
-
 		_cache.queues[serverId] = data
 	else
 		warn("[ServerData] GetRaceQueue API returned nil for server ", serverId)
@@ -197,12 +169,6 @@ function ServerData.GetRaceQueueForTrack(serverId, trackName)
 	local summary = ServerData.GetRaceQueue(serverId)
 	if not summary then return {} end
 
-	-- Debug: Print what the API returned
-	print("[ServerData] API summary returned:")
-	print("[ServerData] queued count:", summary.queued and #summary.queued or 0)
-	print("[ServerData] in_progress count:", summary.in_progress and #summary.in_progress or 0)
-	print("[ServerData] completed_recent count:", summary.completed_recent and #summary.completed_recent or 0)
-
 	-- Get track ID for filtering
 	local track = ServerData.GetTrackByName(trackName)
 	if not track or not track.id then
@@ -216,10 +182,8 @@ function ServerData.GetRaceQueueForTrack(serverId, trackName)
 	-- Helper function to add races from a list
 	local function addRacesFromList(list)
 		if list then
-			print("[ServerData] Processing list with", #list, "races for track", trackName, "(ID:", trackId, ")")
 			for _, race in ipairs(list) do
 				local raceTrackId = tostring(race.track)
-				print("[ServerData] Race", race.number, "track ID:", raceTrackId, "matches:", raceTrackId == trackId)
 				if raceTrackId == trackId then
 					table.insert(trackRaces, race)
 				end
@@ -323,7 +287,6 @@ function ServerData.StorePlayerNotifications(playerUserId, notifications)
 		lastUpdated = tick()
 	}
 
-	print("[ServerData] Stored", #notifications, "notifications for player", playerUserId)
 	return true
 end
 
@@ -363,7 +326,6 @@ function ServerData.GetPlayerNotifications(playerUserId)
 	end
 
 	-- Fetch fresh notifications from API
-	print("[ServerData] Fetching notifications from API for player", playerUserId)
 	local newNotifications = ApiService.GetPlayerNotifications(playerUserId)
 
 	if not newNotifications then
@@ -385,10 +347,8 @@ function ServerData.GetPlayerNotifications(playerUserId)
 	if hasChanges then
 		ServerData.RemovePlayerVehicles(playerUserId)
 
-		print("[ServerData] Notifications changed for player", playerUserId, "- returning", #newNotifications, "notifications")
 		return newNotifications
 	else
-		print("[ServerData] No notification changes for player", playerUserId)
 		return nil
 	end
 end
@@ -401,7 +361,6 @@ function ServerData.RemovePlayerNotifications(playerUserId)
 
 	if _cache.playerNotifications[playerUserId] then
 		_cache.playerNotifications[playerUserId] = nil
-		print("[ServerData] Removed notifications from storage for player", playerUserId)
 		return true
 	end
 
@@ -410,8 +369,7 @@ end
 
 function ServerData.ClearAllPlayerNotifications()
 	_cache.playerNotifications = {}
-	print("[ServerData] Cleared all player notifications from storage")
-end
+	end
 
 -- Vehicle Skins caching
 function ServerData.GetAllSkins()
@@ -421,11 +379,9 @@ function ServerData.GetAllSkins()
 	end
 
 	-- Fetch from API
-	print("[ServerData] Fetching all vehicle skins from API")
 	local skins = ApiService.GetAllVehicleSkins()
 	if skins then
 		_cache.skins = skins
-		print("[ServerData] Cached", #skins, "vehicle skins")
 		return skins
 	else
 		warn("[ServerData] Failed to fetch vehicle skins from API")
@@ -447,8 +403,7 @@ end
 
 function ServerData.ClearSkins()
 	_cache.skins = nil
-	print("[ServerData] Cleared vehicle skins from cache")
-end
+	end
 
 -- Player data storage functions (similar to PlayerCache)
 function ServerData.SetPlayerData(userId, data)
@@ -463,20 +418,17 @@ function ServerData.GetPlayerData(userId)
 		_cache.playerData[userId]["vehicles"] = ApiService.GetPlayerVehicles(userId)
 		_cache.playerData[userId]["inventory"] = ApiService.GetFullInventory(userId)
 		_cache.playerData[userId]["skins"] = ApiService.GetPlayerVehicleSkins(userId)
-		print("[ServerData] Loaded player data for userId:", userId)
-	end
+		end
 	return _cache.playerData[userId]
 end
 
 function ServerData.ClearPlayerData(userId)
 	_cache.playerData[userId] = nil
-	print("[ServerData] Cleared player data for userId:", userId)
-end
+	end
 
 function ServerData.ClearAllPlayerData()
 	_cache.playerData = {}
-	print("[ServerData] Cleared all player data from storage")
-end
+	end
 
 return ServerData
 

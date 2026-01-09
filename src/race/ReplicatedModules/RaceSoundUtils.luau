@@ -149,7 +149,7 @@ local function createSpatialSound(parent, soundId, name)
 		s.Looped = false -- We handle looping manually
 		s.RollOffMode = Enum.RollOffMode.Linear
 		s.RollOffMinDistance = 10
-		s.RollOffMaxDistance = 150
+		s.RollOffMaxDistance = 75
 		s.Parent = parent
 		return s
 	end)

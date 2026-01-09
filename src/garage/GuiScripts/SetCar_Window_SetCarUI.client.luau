@@ -100,7 +100,7 @@ end
 local function setCar(key, vehicleId, unslot)
 	local placeMeshEvent = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("SetCar")
 	placeMeshEvent:FireServer("Car", key, vehicleId, unslot)
-	script.Parent.Visible = false
+	mainGui.Visible = false
 end
 
 

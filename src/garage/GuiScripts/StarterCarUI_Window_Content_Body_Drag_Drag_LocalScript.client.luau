@@ -5,18 +5,9 @@ local Utils = require(game.ReplicatedStorage:WaitForChild("Modules"):WaitForChil
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
-local button = playerGui:WaitForChild("StarterCarUI"):WaitForChild("Window"):WaitForChild("Content"):WaitForChild("Body"):WaitForChild("Drag")
-
-local function findParentByName(instance, name)
-	local current = instance.Parent
-	while current do
-		if current.Name == name then
-			return current
-		end
-		current = current.Parent
-	end
-	return nil
-end
+local starterCarUI = playerGui:WaitForChild("StarterCarUI")
+local window = starterCarUI:WaitForChild("Window")
+local button = window:WaitForChild("Content"):WaitForChild("Body"):WaitForChild("Drag")
 
 -- Load thumbnail when script loads
 local function loadThumbnail()
@@ -56,11 +47,6 @@ loadThumbnail()
 
 button.MouseButton1Click:Connect(function()
 	ChooseFirstCarEvent:FireServer("Clean")
-	local window = findParentByName(script, "Window")
-	if window and window:IsA("GuiObject") then
-		window.Visible = false
-	else
-		warn("Window frame not found")
-	end
+	window.Visible = false
 end)
 

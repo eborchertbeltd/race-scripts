@@ -4,7 +4,7 @@ local Players = game:GetService("Players")
 
 local ev = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("ShowSetCar")
 local player = Players.LocalPlayer
-local gui = player:WaitForChild("PlayerGui"):WaitForChild("BaseGui"):WaitForChild("Canvas"):WaitForChild("Frame"):WaitForChild("SetVehicleButton") -- ScreenGui
+local gui = player:WaitForChild("PlayerGui"):WaitForChild("BaseGui"):WaitForChild("Canvas"):WaitForChild("Bottom"):WaitForChild("SetVehicleButton") -- ScreenGui
 gui.Visible = false
 
 ev.OnClientEvent:Connect(function(show, padName)

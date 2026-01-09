@@ -102,9 +102,11 @@ function showReward(result)
 end
 
 
+local BLUEPRINT_SPIN_COST = 100
+
 purchaseButton.MouseButton1Click:Connect(function()
-	local playerMoney = player:GetAttribute("Money")
-	if not spinning and tonumber(playerMoney) > 500 then
+	local playerMoney = tonumber(player:GetAttribute("Money")) or 0
+	if not spinning and playerMoney >= BLUEPRINT_SPIN_COST then
 		spinning = true
 		-- Play the spin sound
 		spinSound:Play()

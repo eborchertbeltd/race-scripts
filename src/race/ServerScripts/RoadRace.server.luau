@@ -6,6 +6,7 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local Utils = require(game.ServerScriptService:WaitForChild("GameScripts"):WaitForChild("Utils"))
 local RaceSoundUtils = require(game.ReplicatedStorage:WaitForChild("Modules"):WaitForChild("RaceSoundUtils"))
+local Billboard = require(game.ServerScriptService:WaitForChild("GameScripts"):WaitForChild("Billboard"))
 
 -- Global LeaderCam tracking
 local leaderCam = nil
@@ -14,6 +15,11 @@ local leaderCamTask = nil -- Track the LeaderCam task so we can stop it
 local activeCars = {} -- Track active cars for leader determination
 local leaderCamInitialPosition = nil -- Store the first position of LeaderCam
 local raceFinished = false -- Track if any car has finished the race
+
+-- PlayerCam tracking (one per player vehicle in the race)
+local playerCams = {} -- {[visibleUserId] = {cam = Part, carId = string, userId = string}}
+local playerCamConnection = nil
+local playerCamTask = nil
 
 local CARS_FOLDER = ReplicatedStorage:WaitForChild("Cars")
 local WAYPOINTS_FOLDER = workspace:WaitForChild("RoadTrackWaypoints")
@@ -70,9 +76,127 @@ local function cleanupLeaderCam()
 	end
 end
 
+-- PlayerCam functions (one camera per player vehicle)
+local function createPlayerCams(finishOrderData)
+	local cameraFolder = workspace:FindFirstChild("RoadCameras")
+	if not cameraFolder then
+		warn("[RoadRace] RoadCameras folder not found, cannot create PlayerCams")
+		return
+	end
+
+	for userId, camData in pairs(playerCams) do
+		if camData.cam and camData.cam.Parent then
+			camData.cam:Destroy()
+		end
+	end
+	playerCams = {}
+
+	for _, entry in ipairs(finishOrderData) do
+		if type(entry) == "table" and entry.vehicle_id and entry.competitor_type == "vehicle" then
+			local success, vehicle = pcall(function()
+				return GameApiService.GetVehicleById(entry.vehicle_id)
+			end)
+
+			if success and vehicle and vehicle.player_roblox_id then
+				local userId = tostring(vehicle.player_roblox_id)
+
+				local playerCam = Instance.new("Part")
+				playerCam.Name = "PlayerCam_" .. userId
+				playerCam.Size = Vector3.new(1, 1, 1)
+				playerCam.Transparency = 1
+				playerCam.Anchored = true
+				playerCam.CanCollide = false
+				playerCam.CanQuery = false
+				playerCam.CanTouch = false
+
+				if leaderCamInitialPosition then
+					playerCam.CFrame = leaderCamInitialPosition
+				end
+
+				playerCam.Parent = cameraFolder
+
+				playerCams[userId] = {
+					cam = playerCam,
+					carId = nil,
+					userId = userId,
+					vehicleId = entry.vehicle_id
+				}
+
+				print("[RoadRace] Created PlayerCam for user:", userId)
+			end
+		end
+	end
+end
+
+local function updatePlayerCams()
+	if raceFinished then
+		return
+	end
+
+	for userId, camData in pairs(playerCams) do
+		if not camData.cam or not camData.cam.Parent then
+			continue
+		end
+
+		local playerCar = nil
+		local playerRoot = nil
+
+		for carId, carData in pairs(activeCars) do
+			if carData.car and carData.car.Parent and carData.root and carData.root.Parent then
+				local carIdAttr = carData.car:GetAttribute("CarId")
+				for i, entry in ipairs(finishOrder) do
+					if type(entry) == "table" and entry.vehicle_id == camData.vehicleId then
+						local expectedCarId = "car" .. tostring(i)
+						if carIdAttr == expectedCarId or carId == expectedCarId then
+							playerCar = carData.car
+							playerRoot = carData.root
+							break
+						end
+					end
+				end
+				if playerCar then break end
+			end
+		end
+
+		if playerRoot then
+			local carPos = playerRoot.Position
+			local carForward = playerRoot.CFrame.LookVector
+
+			local camOffset = carForward * 15 + Vector3.new(0, 4, 0)
+			local camPosition = carPos + camOffset
+
+			if leaderCamInitialPosition and camPosition.Y < (leaderCamInitialPosition.Y - 50) then
+				camData.cam.CFrame = leaderCamInitialPosition
+			else
+				local lookDirection = (carPos - camPosition).Unit
+				camData.cam.CFrame = CFrame.lookAt(camPosition, camPosition + lookDirection)
+			end
+		end
+	end
+end
+
+local function cleanupPlayerCams()
+	if playerCamTask then
+		task.cancel(playerCamTask)
+		playerCamTask = nil
+	end
+
+	if playerCamConnection then
+		playerCamConnection:Disconnect()
+		playerCamConnection = nil
+	end
+
+	for userId, camData in pairs(playerCams) do
+		if camData.cam and camData.cam.Parent then
+			camData.cam:Destroy()
+		end
+	end
+	playerCams = {}
+end
+
 local function updateLeaderCam()
-	if not leaderCam or not leaderCam.Parent then 
-		return 
+	if not leaderCam or not leaderCam.Parent then
+		return
 	end
 
 	-- If race has finished, return to origin and stop tracking
@@ -134,7 +258,6 @@ end
 local function fadeOutAndDestroy(model, duration)
 	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
-			part.CanCollide = false
 			local tween = TweenService:Create(part, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Transparency = 1})
 			tween:Play()
 		end
@@ -742,7 +865,10 @@ local function runCar(carId: string, finishRank: number, topSpeedTrack: number, 
 
 		-- update live place attribute for debugging/UI
 		local place = director:getPlace(carId)
-		if place then car:SetAttribute("Place", place) end
+		if place then
+			car:SetAttribute("Place", place)
+			Utils.updateNameBillboardPosition(car, place)
+		end
 
 		-- advance by distance with cooldown
 		local now = os.clock()
@@ -812,6 +938,7 @@ local function runCar(carId: string, finishRank: number, topSpeedTrack: number, 
 						end
 						-- Update billboard with final results FIRST (before any blocking calls)
 						Utils.updateRaceBillboard("Road", "finished", orderLabels)
+						Billboard.ClearCurrentPositions("Road")
 
 						-- Fire stats update to clients with final results IMMEDIATELY
 						Utils.fireRaceStatsUpdate("Road", {
@@ -846,6 +973,7 @@ local function runCar(carId: string, finishRank: number, topSpeedTrack: number, 
 							end
 
 							cleanupLeaderCam()
+							cleanupPlayerCams()
 							-- Use task.spawn so TriggerNextRace doesn't block
 							task.spawn(function()
 								pcall(function()
@@ -958,6 +1086,9 @@ startRace.OnInvoke = function(payload)
 	-- Find the existing LeaderCam
 	findLeaderCam()
 
+	-- Create PlayerCams for player vehicles in this race
+	createPlayerCams(finishOrder)
+
 	task.spawn(function()
 		-- 2-by-2 grid using forward/back rows and left/right columns
 		local wp1 = waypoints[1]
@@ -975,8 +1106,8 @@ startRace.OnInvoke = function(payload)
 		runCar("car3", 3, topSpeedTrack, 170, 240, laps, (right0 * (-halfWidth)) - (fwd0 * rowGap), startDelay)
 		runCar("car4", 4, topSpeedTrack, 155, 230, laps, (right0 * (halfWidth)) - (fwd0 * rowGap), startDelay)
 
-		-- Start LeaderCam tracking after cars are created and registered (with a small delay)
-		-- Cancel any existing task first
+		-- Start LeaderCam and PlayerCam tracking after cars are created and registered (with a small delay)
+		-- Cancel any existing tasks first
 		if leaderCamTask then
 			task.cancel(leaderCamTask)
 			leaderCamTask = nil
@@ -985,10 +1116,23 @@ startRace.OnInvoke = function(payload)
 			leaderCamConnection:Disconnect()
 			leaderCamConnection = nil
 		end
+		if playerCamTask then
+			task.cancel(playerCamTask)
+			playerCamTask = nil
+		end
+		if playerCamConnection then
+			playerCamConnection:Disconnect()
+			playerCamConnection = nil
+		end
 
 		leaderCamTask = task.spawn(function()
 			task.wait(startDelay + 1.0) -- Wait for cars to be created, registered, and start moving
 			leaderCamConnection = RunService.Heartbeat:Connect(updateLeaderCam)
+		end)
+
+		playerCamTask = task.spawn(function()
+			task.wait(startDelay + 1.0) -- Wait for cars to be created, registered, and start moving
+			playerCamConnection = RunService.Heartbeat:Connect(updatePlayerCams)
 		end)
 
 		-- Start race progress updates after delay
@@ -1085,6 +1229,7 @@ startRace.OnInvoke = function(payload)
 
 					-- Update billboard with current positions
 					Utils.updateRaceBillboard("Road", "in_progress", sortedPositions)
+					Billboard.UpdateCurrentPositions("Road", sortedPositions)
 
 					-- Fire stats update to clients
 					Utils.fireRaceStatsUpdate("Road", {
