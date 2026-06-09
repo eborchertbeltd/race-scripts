@@ -577,7 +577,6 @@ function ApiService.DeleteNotification(notificationId)
 
 	if success and response.Success then
 		if response.StatusCode == 200 then
-			print("[API] DELETE notification success:", notificationId)
 			return HttpService:JSONDecode(response.Body)
 		elseif response.StatusCode == 404 then
 			warn("[API] Notification not found:", notificationId)

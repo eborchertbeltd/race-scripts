@@ -87,6 +87,13 @@ applyUIMode()
 
 -- Mobile menu button handling (only relevant if using mobile UI)
 if shouldUseMobileUI() then
+	-- Adjust BaseGui -> Frame height for mobile (100 instead of 130)
+	local baseGuiForResize = playerGui:WaitForChild("BaseGui")
+	local baseFrame = baseGuiForResize:WaitForChild("Frame")
+	if baseFrame then
+		baseFrame.Size = UDim2.new(baseFrame.Size.X.Scale, baseFrame.Size.X.Offset, baseFrame.Size.Y.Scale, 100)
+	end
+
 	local mobileBaseGui = playerGui:WaitForChild("MobileBaseGui")
 	local mobileCanvas = mobileBaseGui:WaitForChild("Canvas")
 	local mobileFrame = mobileCanvas:WaitForChild("Frame")

@@ -13,7 +13,6 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local GetPlayerCache = ReplicatedStorage:WaitForChild("Player"):WaitForChild("GetPlayerCache")
 local GetDataCache = ReplicatedStorage:WaitForChild("Player"):WaitForChild("GetCache")
-local UpdateVehicleSkin = ReplicatedStorage:WaitForChild("Player"):WaitForChild("UpdateVehicleSkin")
 local UpdateVehicleColor = ReplicatedStorage:WaitForChild("Player"):WaitForChild("UpdateVehicleColor")
 local UpdateGarage = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("UpdateGarage")
 local mainGui = playerGui:WaitForChild("SkinGui"):WaitForChild("Window")
@@ -25,9 +24,7 @@ local selectionFrame = mainGui:WaitForChild("Content"):WaitForChild("Body"):Wait
 local vehicleTemplate = Utils.findDescendantByName(selectionFrame, "VehicleTemplate")
 local picker = mainGui:WaitForChild("Content"):WaitForChild("Picker")
 local pickerFrame = picker:WaitForChild("Frame")
-local skinOptions = pickerFrame:WaitForChild("SkinOptions")
 local colorOptions = pickerFrame:WaitForChild("ColorOptions")
-local selectionTemplate = Utils.findDescendantByName(skinOptions, "VehicleTemplate")
 local selectCarFrame = picker:WaitForChild("Selected")
 local backButton = selectCarFrame:WaitForChild("Back")
 local currentTab = "Body"
@@ -39,7 +36,6 @@ local loaded = false
 local swapping = false
 
 vehicleTemplate.Visible = false
-selectionTemplate.Visible = false
 
 local selectedVehicle = nil
 
@@ -255,69 +251,7 @@ local function populateColorOptions()
 end
 
 
-local function selectSkin(modelName)
-	if not selectedVehicle then
-		warn("No vehicle selected")
-		return
-	end
-
-	print("Updating skin to:", modelName, "for vehicle:", selectedVehicle.id)
-
-	local result = UpdateVehicleSkin:InvokeServer(selectedVehicle.id, modelName)
-
-	if result and result.success then
-		print("Skin updated successfully!")
-		-- Reload the selected vehicle display with updated data
-		reloadSelectedVehicle()
-		UpdateGarage:FireServer()
-	else
-		warn("Failed to update skin:", result and result.error or "Unknown error")
-	end
-end
-
-
-local function loadSkinOption(item, modelName)
-	-- Set the name labels
-	local nameFrame = Utils.findDescendantByName(item, "Name")
-	local itemLabel = Utils.findDescendantByName(nameFrame, "ItemLabel")
-	local itemLabelStroke = Utils.findDescendantByName(nameFrame, "ItemLabelStroke")
-	item.Name = modelName
-	itemLabel.Text = modelName
-	itemLabelStroke.Text = modelName
-
-	-- Add thumbnail to ViewportFrame using model name
-	local itemImage = Utils.findDescendantByName(item, "ViewportFrame")
-	if itemImage then
-		local carsFolder = ReplicatedStorage:WaitForChild("Cars")
-		local carModel = carsFolder:FindFirstChild(modelName)
-		if carModel then
-			local carClone = carModel:Clone()
-			carClone.Parent = itemImage
-
-			local viewportCamera = Instance.new("Camera")
-			viewportCamera.Parent = itemImage
-
-			local thumbnailCFrame = carClone:FindFirstChild("ThumbnailCFrame")
-			local thumbnailFOV = carClone:FindFirstChild("ThumbnailFOV")
-			if thumbnailCFrame and thumbnailCFrame:IsA("CFrameValue") then
-				viewportCamera.CFrame = thumbnailCFrame.Value
-				if thumbnailFOV and thumbnailFOV:IsA("NumberValue") then
-					viewportCamera.FieldOfView = thumbnailFOV.Value
-				else
-					viewportCamera.FieldOfView = 10
-				end
-			end
-
-			itemImage.CurrentCamera = viewportCamera
-		end
-	end
-
-	item.Visible = true
-	return item
-end
-
-
-local function switchVehicle(vehicleOwned) 
+local function switchVehicle(vehicleOwned)
 	selectedVehicle = vehicleOwned
 	selectionFrame.Visible = false
 	picker.Visible = true
@@ -333,62 +267,6 @@ local function switchVehicle(vehicleOwned)
 	local selectedItem = vehicleTemplate:Clone()
 	selectedItem = loadItem(selectedItem, vehicleOwned, false, false)
 	selectedItem.Parent = selectCarFrame
-
-	-- Clear existing content in skinOptions
-	for _, child in ipairs(skinOptions:GetChildren()) do
-		if not child:IsA("UIListLayout") and not child:IsA("UIPadding") and not child:IsA("UIGridLayout")  and child.Visible then
-			child:Destroy()
-		end
-	end
-
-	-- Build list of available skins (owned skins only)
-	local skinModels = {}
-	local addedSkins = {}
-
-	-- Add owned skins from cache
-	if cache and cache.skins then
-		for _, ownedSkin in ipairs(cache.skins) do
-			-- vehicle_skin_details contains the full skin data including name
-			local skinName = ownedSkin.vehicle_skin_details and ownedSkin.vehicle_skin_details.name
-			if skinName and not addedSkins[skinName] then
-				table.insert(skinModels, skinName)
-				addedSkins[skinName] = true
-				print("[SkinGui] Added owned skin:", skinName)
-			end
-		end
-	end
-
-	-- Log if no skins found
-	if #skinModels == 0 then
-		warn("[SkinGui] Player has no owned skins in cache")
-	end
-
-	-- Create skin option buttons
-	for _, modelName in ipairs(skinModels) do
-		local skinItem = selectionTemplate:Clone()
-		skinItem = loadSkinOption(skinItem, modelName)
-
-		local button = Utils.findDescendantByName(skinItem, "TextButton")
-		button.MouseButton1Click:Connect(function()
-			GarageSoundUtils.PlayTightening()
-			selectSkin(modelName)
-		end)
-
-		skinItem.Parent = skinOptions
-	end
-
-	-- Update canvas size for skinOptions after adding items
-	RunService.RenderStepped:Wait()
-	local grid = skinOptions:FindFirstChildOfClass("UIGridLayout")
-	local padding = skinOptions:FindFirstChildOfClass("UIPadding")
-	if grid then
-		local totalHeight = grid.AbsoluteContentSize.Y
-		if padding then
-			totalHeight += padding.PaddingTop.Offset
-			totalHeight += padding.PaddingBottom.Offset
-		end
-		skinOptions.CanvasSize = UDim2.new(0, 0, 0, totalHeight)
-	end
 
 	-- Populate color options
 	populateColorOptions()

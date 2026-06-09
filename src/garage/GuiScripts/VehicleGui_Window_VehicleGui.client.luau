@@ -8,7 +8,8 @@ local GetPlayerCache = ReplicatedStorage:WaitForChild("Player"):WaitForChild("Ge
 local GetDataCache = ReplicatedStorage:WaitForChild("Player"):WaitForChild("GetCache")
 local DeleteVehicle = ReplicatedStorage:WaitForChild("Player"):WaitForChild("DeleteVehicle")
 local UpdateCreateVehicle = ReplicatedStorage:WaitForChild("Player"):WaitForChild("UpdateCreateVehicle")
-local mainGui = playerGui:WaitForChild("VehicleGui"):WaitForChild("Window")
+local vehicleGui = playerGui:WaitForChild("VehicleGui")
+local mainGui = vehicleGui:WaitForChild("Window")
 local Utils = require(game.ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Utils"))
 local GarageSoundUtils = require(game.ReplicatedStorage:WaitForChild("Modules"):WaitForChild("GarageSoundUtils"))
 local RunService = game:GetService("RunService")
@@ -70,8 +71,6 @@ local vehicle = {
 	slotted_number = false
 }
 
-
-
 textInput:GetPropertyChangedSignal("Text"):Connect(function()
 	vehicle.Name = textInput.Text
 	-- You could call ApiService or save to DataStore here
@@ -104,9 +103,37 @@ local function updateCache(oldPart, newPart)
 end
 
 
-local function getItemById(itemId) 
+local function getItemById(itemId)
 	local data = GetDataCache:InvokeServer("Part", itemId)
 	return data
+end
+
+
+-- Part value by level (same as backend)
+local PART_VALUES = {
+	Common = 200,
+	Rare = 500,
+	Epic = 1000,
+	Legendary = 2000
+}
+
+-- Calculate total refund for current vehicle
+local function calculateVehicleRefund()
+	local totalRefund = 0
+	local partKeys = {"Body", "Engine", "Exhaust", "Transmission", "Tire"}
+
+	for _, key in ipairs(partKeys) do
+		local partId = vehicle[key]
+		if partId then
+			local partData = getItemById(partId)
+			if partData and partData.level then
+				local partValue = PART_VALUES[partData.level] or 0
+				totalRefund = totalRefund + partValue
+			end
+		end
+	end
+
+	return totalRefund
 end
 
 
@@ -529,10 +556,50 @@ local function switchTab(tabType)
 end
 
 
-local function deleteVehicle() 
+local function deleteVehicle()
 	if vehicle.Id then
-		DeleteVehicle:InvokeServer(vehicle.Id, vehicle.slotted_number)
+		local result = DeleteVehicle:InvokeServer(vehicle.Id, vehicle.slotted_number)
+		-- Update player's money attribute with new balance from server
+		if result and result.new_balance then
+			player:SetAttribute("Money", tonumber(result.new_balance))
+		end
 		loadItems()
+	end
+end
+
+-- Show sell confirmation dialog
+local function showSellConfirmation()
+	local confirmFrame = vehicleGui:FindFirstChild("Confirm")
+	if not confirmFrame then
+		warn("[VehicleGui] Confirm frame not found")
+		return
+	end
+
+	-- Calculate refund amount
+	local refundAmount = calculateVehicleRefund()
+
+	-- Find and set the message
+	local messageLabel = confirmFrame:FindFirstChild("Message", true)
+	if messageLabel then
+		-- Create message with green money text using RichText
+		messageLabel.RichText = true
+		messageLabel.Text = string.format(
+			'Are you sure you want to sell this vehicle for <font color="#00FF00">$%d</font>?',
+			refundAmount
+		)
+	else
+		warn("[VehicleGui] Message label not found in Confirm frame")
+	end
+
+	-- Show the confirmation dialog
+	confirmFrame.Visible = true
+end
+
+-- Hide sell confirmation dialog
+local function hideSellConfirmation()
+	local confirmFrame = vehicleGui:FindFirstChild("Confirm")
+	if confirmFrame then
+		confirmFrame.Visible = false
 	end
 end
 
@@ -571,8 +638,32 @@ local function firstLoad()
 		local deleteButton = Utils.findDescendantByName(mainFrame, "Delete")
 		deleteButton.MouseButton1Click:Connect(function()
 			GarageSoundUtils.PlayButtonPressed()
-			deleteVehicle()
+			showSellConfirmation()
 		end)
+
+		-- Confirmation dialog buttons
+		local confirmFrame = vehicleGui:FindFirstChild("Confirm")
+		if confirmFrame then
+			-- Initially hide the confirmation dialog
+			confirmFrame.Visible = false
+
+			local cancelButton = Utils.findDescendantByName(confirmFrame, "Cancel")
+			if cancelButton then
+				cancelButton.MouseButton1Click:Connect(function()
+					GarageSoundUtils.PlayButtonPressed()
+					hideSellConfirmation()
+				end)
+			end
+
+			local sellButton = Utils.findDescendantByName(confirmFrame, "Sell")
+			if sellButton then
+				sellButton.MouseButton1Click:Connect(function()
+					GarageSoundUtils.PlayButtonPressed()
+					hideSellConfirmation()
+					deleteVehicle()
+				end)
+			end
+		end
 		local saveButton = Utils.findDescendantByName(mainFrame, "Save")
 		saveButton.MouseButton1Click:Connect(function()
 			GarageSoundUtils.PlayButtonPressed()

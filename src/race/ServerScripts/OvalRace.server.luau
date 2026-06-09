@@ -619,7 +619,13 @@ local function runCar(carId: string, finishRank: number, topSpeedTrack: number, 
 	local function nextIndex(i) return (i % totalWps) + 1 end
 	local rcParams = RaycastParams.new()
 	rcParams.FilterType = Enum.RaycastFilterType.Exclude
-	rcParams.FilterDescendantsInstances = {car, WAYPOINTS_FOLDER, NPCCarsFolder} -- ignore this car, waypoints, and other NPC cars when raycasting
+	-- Ignore car, waypoints, NPC cars, and OvalShell (flat barrier parts)
+	local ovalShell = workspace:FindFirstChild("Oval") and workspace.Oval:FindFirstChild("OvalShell")
+	local filterList = {car, WAYPOINTS_FOLDER, NPCCarsFolder}
+	if ovalShell then
+		table.insert(filterList, ovalShell)
+	end
+	rcParams.FilterDescendantsInstances = filterList
 
 	local conn
 	local function onHeartbeat(dt)
@@ -649,13 +655,22 @@ local function runCar(carId: string, finishRank: number, topSpeedTrack: number, 
 		local distToAlong = dirToAlong.Magnitude
 		local aimDir = (distToAlong > 1e-3) and (dirToAlong / distToAlong):Lerp(segDir, 0.35).Unit or segDir
 
-		-- Ground normal (fallback to +Y if miss)
-		local rayHit = workspace:Raycast(rootPos + Vector3.new(0, 5, 0), Vector3.new(0, -80, 0), rcParams)
+		-- Ground normal using car's local down for better banking detection on oval tracks
+		local carUp = rootCF.UpVector
+		local rayOrigin = rootPos + carUp * 5
+		local rayDir = -carUp * 80
+		local rayHit = workspace:Raycast(rayOrigin, rayDir, rcParams)
+
+		-- If local ray misses, try world down as fallback
+		if not rayHit then
+			rayHit = workspace:Raycast(rootPos + Vector3.new(0, 5, 0), Vector3.new(0, -80, 0), rcParams)
+		end
+
 		local up = (rayHit and rayHit.Normal) or Vector3.new(0,1,0)
 
-		-- Smooth ground up to reduce jitter (0.6 for responsive banking on oval tracks)
+		-- Smooth ground up to reduce jitter (0.7 for responsive banking on oval tracks)
 		local lastUp = (car:GetAttribute("_lastUpX") and Vector3.new(car:GetAttribute("_lastUpX"), car:GetAttribute("_lastUpY"), car:GetAttribute("_lastUpZ"))) or up
-		up = lastUp:Lerp(up, 0.6).Unit
+		up = lastUp:Lerp(up, 0.7).Unit
 		car:SetAttribute("_lastUpX", up.X)
 		car:SetAttribute("_lastUpY", up.Y)
 		car:SetAttribute("_lastUpZ", up.Z)

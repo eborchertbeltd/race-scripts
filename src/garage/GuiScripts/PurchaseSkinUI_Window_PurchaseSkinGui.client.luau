@@ -37,6 +37,9 @@ local CASH_PRICE = 10000
 local playerCache = nil
 local allSkins = nil
 
+-- Loading guard to prevent duplicate loads
+local isLoading = false
+
 -- Forward declaration for refresh function (used by purchase handlers)
 local refreshAfterPurchase
 
@@ -55,20 +58,23 @@ local function getOwnedSkinNames()
 end
 
 
--- Helper: Get purchasable skins (not owned and price >= threshold)
+-- Premium skins available for direct purchase only
+local PREMIUM_SKINS = {
+	["Wraith"] = true,
+	["Vortex"] = true,
+	["Raven"] = true,
+}
+
+-- Helper: Get purchasable skins (only Wraith, Vortex, and Raven)
 local function getPurchasableSkins()
-	local ownedNames = getOwnedSkinNames()
 	local purchasable = {}
 
 	if allSkins then
 		for _, skin in ipairs(allSkins) do
 			local skinName = skin.name
-			local price = skin.price or 0
 
-			-- Only include skins that:
-			-- 1. Are not already owned
-			-- 2. Have price >= MIN_PRICE_THRESHOLD
-			if skinName and not ownedNames[skinName] and price >= MIN_PRICE_THRESHOLD then
+			-- Only include premium skins (Wraith, Vortex, Raven)
+			if skinName and PREMIUM_SKINS[skinName] then
 				table.insert(purchasable, skin)
 			end
 		end
@@ -450,6 +456,15 @@ end
 
 -- Load all purchasable skins
 local function loadItems()
+	-- Prevent concurrent loads
+	if isLoading then
+		return
+	end
+	isLoading = true
+
+	-- Always clear caches and items first
+	playerCache = nil
+	allSkins = nil
 	clearItems()
 
 	-- Fetch player cache and all skins
@@ -459,6 +474,7 @@ local function loadItems()
 	if not rawSkins then
 		warn("Failed to fetch all skins")
 		showNothingAvailable()
+		isLoading = false
 		return
 	end
 
@@ -472,36 +488,20 @@ local function loadItems()
 		end
 	end
 
-	-- Get free purchasable skins (for cash)
-	local freePurchasableSkins = getFreePurchasableSkins()
-
-	-- Get Robux purchasable skins
+	-- Get purchasable skins (sorted by price low to high)
 	local purchasableSkins = getPurchasableSkins()
 
 	-- Check if there's anything to display
-	if #freePurchasableSkins == 0 and #purchasableSkins == 0 then
+	if #purchasableSkins == 0 then
 		showNothingAvailable()
 	else
-		-- Create cash purchase items for free skins
-		if #freePurchasableSkins > 0 then
-			print("[PurchaseSkinGui] Creating", #freePurchasableSkins, "cash purchase items")
-			for i, skin in ipairs(freePurchasableSkins) do
-				print("[PurchaseSkinGui] Cloning cash template for skin #" .. i .. ":", skin.name)
-				local item = cashPurchaseTemplate:Clone()
-				loadCashPurchaseItem(item, skin)
-				item.Parent = scrollingFrame
-			end
-		end
-
 		-- Create Robux purchase items
-		if #purchasableSkins > 0 then
-			print("[PurchaseSkinGui] Creating", #purchasableSkins, "Robux purchase items")
-			for i, skin in ipairs(purchasableSkins) do
-				print("[PurchaseSkinGui] Cloning template for skin #" .. i .. ":", skin.name)
-				local item = purchaseTemplate:Clone()
-				loadPurchaseItem(item, skin)
-				item.Parent = scrollingFrame
-			end
+		print("[PurchaseSkinGui] Creating", #purchasableSkins, "Robux purchase items")
+		for i, skin in ipairs(purchasableSkins) do
+			print("[PurchaseSkinGui] Cloning template for skin #" .. i .. ":", skin.name)
+			local item = purchaseTemplate:Clone()
+			loadPurchaseItem(item, skin)
+			item.Parent = scrollingFrame
 		end
 
 		print("[PurchaseSkinGui] ScrollingFrame children count:", #scrollingFrame:GetChildren())
@@ -520,6 +520,8 @@ local function loadItems()
 		end
 		scrollingFrame.CanvasSize = UDim2.new(0, 0, 0, totalHeight)
 	end
+
+	isLoading = false
 end
 
 
@@ -534,24 +536,16 @@ end
 -- Monitor mainGui.Visible for changes
 mainGui:GetPropertyChangedSignal("Visible"):Connect(onVisibilityChanged)
 
--- Also check on script start in case it's already visible
-if mainGui.Visible then
-	loadItems()
-end
-
 -- Helper to refresh after purchase
 function refreshAfterPurchase(source, identifier)
 	print("[PurchaseSkinGui] Refreshing after purchase from:", source, identifier or "")
 
-	-- Clear local cache to force fresh data fetch
-	playerCache = nil
-	allSkins = nil
-
 	-- Wait for server to process
 	task.wait(1)
 
-	-- Reload if still visible
+	-- Reload if still visible (loadItems clears caches internally)
 	if mainGui.Visible then
+		isLoading = false  -- Reset guard to allow refresh
 		loadItems()
 	end
 end

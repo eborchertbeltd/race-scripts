@@ -86,7 +86,6 @@ function DataCache.StorePlayerNotifications(playerUserId, notifications)
 		lastUpdated = tick()
 	}
 
-	print("[DataCache] Stored", #notifications, "notifications for player", playerUserId)
 	return true
 end
 
@@ -126,7 +125,6 @@ function DataCache.GetPlayerNotifications(playerUserId)
 	end
 
 	-- Fetch fresh notifications from API
-	print("[DataCache] Fetching notifications from API for player", playerUserId)
 	local newNotifications = ApiService.GetPlayerNotifications(playerUserId)
 
 	if not newNotifications then
@@ -146,10 +144,8 @@ function DataCache.GetPlayerNotifications(playerUserId)
 
 	-- Return the full list only if there were changes, otherwise return nil
 	if hasChanges then
-		print("[DataCache] Notifications changed for player", playerUserId, "- returning", #newNotifications, "notifications")
 		return newNotifications
 	else
-		print("[DataCache] No notification changes for player", playerUserId)
 		return nil
 	end
 end
@@ -162,7 +158,6 @@ function DataCache.RemovePlayerNotifications(playerUserId)
 
 	if _cache.playerNotifications[playerUserId] then
 		_cache.playerNotifications[playerUserId] = nil
-		print("[DataCache] Removed notifications from storage for player", playerUserId)
 		return true
 	end
 
@@ -179,7 +174,6 @@ end
 
 function DataCache.ClearAllPlayerNotifications()
 	_cache.playerNotifications = {}
-	print("[DataCache] Cleared all player notifications from storage")
 end
 
 
